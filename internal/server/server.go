@@ -85,6 +85,20 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case rest == "/uploads" || strings.HasPrefix(rest, "/uploads/"):
 		h.uploads.ServeHTTP(w, r)
+	case rest == "/files" || strings.HasPrefix(rest, "/files/"):
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.statFile(w, r, strings.TrimPrefix(strings.TrimPrefix(rest, "/files"), "/"))
+	case rest == "/tree" || strings.HasPrefix(rest, "/tree/"):
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.listTree(w, r, strings.TrimPrefix(strings.TrimPrefix(rest, "/tree"), "/"))
 	default:
 		writeError(w, http.StatusNotFound, "no such route")
 	}
@@ -168,6 +182,8 @@ func writePathError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, uploadroot.ErrNotFolder):
 		writeError(w, http.StatusBadRequest, "not a folder")
+	case errors.Is(err, uploadroot.ErrNotFile):
+		writeError(w, http.StatusBadRequest, "not a file")
 	case errors.Is(err, uploadroot.ErrConflict):
 		writeError(w, http.StatusConflict, "a file is in the way")
 	default:
