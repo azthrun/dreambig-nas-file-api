@@ -334,6 +334,62 @@ if uploader.request:  # None for a 0-byte file, which completes on creation
 
 Run it with `~/.venvs/nas-file-api/bin/python3 upload.py`.
 
+#### With Node.js (tus-js-client)
+
+A small command-line uploader on the official [tus-js-client](https://github.com/tus/tus-js-client) (Node.js 18 or later; no global install):
+
+```sh
+mkdir ~/nas-tus && cd ~/nas-tus && npm init -y && npm install tus-js-client@4
+```
+
+Save as `~/nas-tus/upload.mjs`:
+
+```js
+// Usage: node upload.mjs <local file> <Destination Path>
+import { createHash } from "node:crypto";
+import { createReadStream, statSync } from "node:fs";
+import { Upload } from "tus-js-client";
+
+const [src, dest] = process.argv.slice(2);
+const st = statSync(src);
+const hash = createHash("sha256");
+for await (const block of createReadStream(src)) hash.update(block);
+
+let serverSum;
+const upload = new Upload(createReadStream(src), {
+  endpoint: process.env.NAS_API + "/uploads/",
+  headers: { Authorization: "Bearer " + process.env.NAS_TOKEN },
+  uploadSize: st.size,
+  chunkSize: 64 << 20, // required for a stream; also what one PATCH sends at most
+  retryDelays: [0, 1000, 3000, 5000], // resume after a dropped connection
+  onShouldRetry(err) {
+    // Retry lost connections and server errors, not refusals such as a 409 Conflict.
+    const status = err.originalResponse ? err.originalResponse.getStatus() : 0;
+    return status === 0 || status >= 500 || status === 423;
+  },
+  metadata: { path: dest, mtime: st.mtime.toISOString(), sha256: hash.digest("hex") },
+  onAfterResponse(req, res) {
+    serverSum = res.getHeader("Upload-Sha256") || serverSum;
+  },
+  onError(err) {
+    // err.originalResponse?.getStatus(): 409 Conflict, 460 SHA-256 mismatch, ...
+    console.error("upload failed:", err.message);
+    process.exit(1);
+  },
+  onSuccess() {
+    console.log("server sha256:", serverSum);
+  },
+});
+upload.start();
+```
+
+```sh
+cd ~/nas-tus && node upload.mjs ~/report.pdf docs/report.pdf
+# server sha256: <64 hex>
+```
+
+If the connection drops (or the service restarts) mid-Upload, it asks for the offset and resumes within the same run. A Conflict exits `1` with the `409`.
+
 ### Folder Upload
 
 [`examples/folder_upload.py`](examples/folder_upload.py) rebuilds a local folder under a Destination Path, one Upload per file. It lists the destination once with the tree listing, skips files already there with the same size and mtime (to the second), reports files that are there but differ as Conflicts (never overwritten), creates the empty folders, and uploads the rest with their mtime and SHA-256. A dropped connection is resumed; running it again after a failure skips what already arrived. Symlinks are skipped.
