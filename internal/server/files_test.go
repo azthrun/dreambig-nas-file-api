@@ -169,6 +169,9 @@ func TestStatIsOnlyGET(t *testing.T) {
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s = %d, want 405", m, rec.Code)
 		}
+		if got := rec.Header().Get("Allow"); got != "GET" {
+			t.Errorf("%s: Allow = %q, want GET", m, got)
+		}
 	}
 }
 

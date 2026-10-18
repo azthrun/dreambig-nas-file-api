@@ -69,6 +69,9 @@ func TestListingIsOnlyGET(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("DELETE = %d, want 405", rec.Code)
 	}
+	if got := rec.Header().Get("Allow"); got != "GET, PUT" {
+		t.Errorf("Allow = %q, want %q", got, "GET, PUT")
+	}
 }
 
 func TestScopedCallerListsOnlyInsideScope(t *testing.T) {
