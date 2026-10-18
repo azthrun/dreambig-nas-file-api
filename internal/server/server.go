@@ -60,12 +60,16 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.EscapedPath(), strings.TrimSuffix(apiPrefix, "/"))
 	switch {
 	case rest == "/folders" || strings.HasPrefix(rest, "/folders/"):
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
+		escaped := strings.TrimPrefix(strings.TrimPrefix(rest, "/folders"), "/")
+		switch r.Method {
+		case http.MethodGet:
+			h.listFolder(w, r, escaped)
+		case http.MethodPut:
+			h.createFolder(w, r, escaped)
+		default:
+			w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut)
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
 		}
-		h.listFolder(w, r, strings.TrimPrefix(strings.TrimPrefix(rest, "/folders"), "/"))
 	default:
 		writeError(w, http.StatusNotFound, "no such route")
 	}
@@ -110,6 +114,33 @@ func (h *apiHandler) listFolder(w http.ResponseWriter, r *http.Request, escaped 
 	writeJSON(w, http.StatusOK, out)
 }
 
+// createFolder serves PUT /api/v1/folders/{path}: creates the folder and any missing
+// parents. 201 when something was created, 200 when the folder already existed.
+func (h *apiHandler) createFolder(w http.ResponseWriter, r *http.Request, escaped string) {
+	rec := audit.FromContext(r.Context())
+	rec.SetOperation("create_folder")
+	caller, _ := auth.CallerFrom(r.Context())
+	p, err := uploadroot.ParseEscapedDestination(escaped)
+	if err != nil {
+		writePathError(w, err)
+		return
+	}
+	rec.SetPath(p.String())
+	created, err := h.root.MkdirAll(caller.Scope, p)
+	if err != nil {
+		writePathError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, struct {
+		Path    string `json:"path"`
+		Created bool   `json:"created"`
+	}{Path: p.String(), Created: created})
+}
+
 // writePathError answers an uploadroot error. Hidden Entries look like missing ones,
 // and no message contains an absolute NAS path.
 func writePathError(w http.ResponseWriter, err error) {
@@ -122,6 +153,8 @@ func writePathError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, uploadroot.ErrNotFolder):
 		writeError(w, http.StatusBadRequest, "not a folder")
+	case errors.Is(err, uploadroot.ErrConflict):
+		writeError(w, http.StatusConflict, "a file is in the way")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
