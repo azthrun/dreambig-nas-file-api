@@ -19,14 +19,17 @@ import (
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/config"
 	"github.com/azthrun/dreambig-nas-file-api/internal/server"
+	"github.com/azthrun/dreambig-nas-file-api/internal/upload"
+	"github.com/azthrun/dreambig-nas-file-api/internal/uploadroot"
 )
 
 func main() {
 	healthcheck := flag.Bool("healthcheck", false, "probe /healthz on NAS_FILE_API_ADDR and exit 0 if it answers 200")
 	flag.Parse()
 
-	cfg := config.Load(os.Getenv)
+	cfg, cfgErr := config.Load(os.Getenv)
 	if *healthcheck {
+		// Only Addr is needed; Load sets it even when the rest of the config is bad.
 		if err := probe(cfg.Addr); err != nil {
 			fmt.Fprintln(os.Stderr, "healthcheck:", err)
 			os.Exit(1)
@@ -35,6 +38,10 @@ func main() {
 	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	if cfgErr != nil {
+		log.Error("refusing to start: bad config", "err", cfgErr)
+		os.Exit(1)
+	}
 	if err := run(cfg, log); err != nil {
 		log.Error("server stopped", "err", err)
 		os.Exit(1)
@@ -45,17 +52,46 @@ func run(cfg config.Config, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	root, err := uploadroot.Open(cfg.UploadRoot)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 	}
+	// The audit log goes to stdout, operational logs to stderr.
+	handler, err := server.New(server.Deps{
+		Root: root, Callers: cfg.Callers, Audit: os.Stdout, Log: log,
+		Limits: upload.Limits{
+			MaxActivePerCaller: cfg.MaxActiveUploadsPerCaller,
+			FreeSpaceReserve:   cfg.FreeSpaceReserve,
+		},
+		UploadExpiry: cfg.UploadExpiry,
+	})
+	if err != nil {
+		return err
+	}
+	// Abandoned Uploads are removed at startup and then hourly, until shutdown.
+	expiryCtx, stopExpiry := context.WithCancel(ctx)
+	expiryDone := make(chan struct{})
+	go func() {
+		defer close(expiryDone)
+		handler.RunUploadExpiry(expiryCtx, time.Hour)
+	}()
+	defer func() {
+		stopExpiry()
+		<-expiryDone
+	}()
 	srv := &http.Server{
-		Handler:           server.New(),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	log.Info("listening", "addr", ln.Addr().String())
+	log.Info("listening", "addr", ln.Addr().String(), "callers", len(cfg.Callers))
 
 	select {
 	case err := <-errc:

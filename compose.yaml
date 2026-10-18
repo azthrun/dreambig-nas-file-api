@@ -39,6 +39,13 @@ services:
     environment:
       # Loopback only: `tailscale serve` proxies to it from the shared namespace.
       NAS_FILE_API_ADDR: 127.0.0.1:8080
+      # Callers and their Credentials (ADR-0004); format in .env.example.
+      NAS_FILE_API_CALLERS: ${NAS_FILE_API_CALLERS:?set NAS_FILE_API_CALLERS in .env}
+      # Days before an untouched incomplete Upload is removed (default 7).
+      NAS_FILE_API_UPLOAD_EXPIRY_DAYS: ${NAS_FILE_API_UPLOAD_EXPIRY_DAYS:-7}
+      # Optional Upload limits; empty means the service's default (see .env.example).
+      NAS_FILE_API_FREE_SPACE_RESERVE_GB: ${NAS_FILE_API_FREE_SPACE_RESERVE_GB:-}
+      NAS_FILE_API_MAX_ACTIVE_UPLOADS_PER_CALLER: ${NAS_FILE_API_MAX_ACTIVE_UPLOADS_PER_CALLER:-}
     volumes:
       - ${NAS_FILE_API_UPLOAD_ROOT_NAS_PATH:?set NAS_FILE_API_UPLOAD_ROOT_NAS_PATH in .env}:/data
     healthcheck:
