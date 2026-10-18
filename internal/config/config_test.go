@@ -3,6 +3,7 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/config"
 )
@@ -47,6 +48,38 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.UploadRoot != "/data" {
 		t.Errorf("UploadRoot = %q, want /data", cfg.UploadRoot)
+	}
+}
+
+func TestUploadExpiryDefaultsToSevenDaysAndIsConfigurableInDays(t *testing.T) {
+	cfg, err := config.Load(env(map[string]string{"NAS_FILE_API_CALLERS": "laptop:" + tokenA}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UploadExpiry != 7*24*time.Hour {
+		t.Errorf("default UploadExpiry = %v, want 168h", cfg.UploadExpiry)
+	}
+	cfg, err = config.Load(env(map[string]string{
+		"NAS_FILE_API_CALLERS":            "laptop:" + tokenA,
+		"NAS_FILE_API_UPLOAD_EXPIRY_DAYS": "30",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UploadExpiry != 30*24*time.Hour {
+		t.Errorf("UploadExpiry = %v, want 720h", cfg.UploadExpiry)
+	}
+}
+
+func TestLoadRefusesBadUploadExpiry(t *testing.T) {
+	for _, v := range []string{"0", "-1", "7d", "1.5", "abc"} {
+		_, err := config.Load(env(map[string]string{
+			"NAS_FILE_API_CALLERS":            "laptop:" + tokenA,
+			"NAS_FILE_API_UPLOAD_EXPIRY_DAYS": v,
+		}))
+		if err == nil {
+			t.Errorf("Load with NAS_FILE_API_UPLOAD_EXPIRY_DAYS=%q succeeded, want error", v)
+		}
 	}
 }
 

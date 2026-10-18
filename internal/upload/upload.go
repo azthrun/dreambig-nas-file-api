@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/tus/tusd/v2/pkg/handler"
-	"github.com/tus/tusd/v2/pkg/memorylocker"
 	expslog "golang.org/x/exp/slog"
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/audit"
@@ -66,6 +65,7 @@ type Handler struct {
 	root     *uploadroot.Root
 	basePath string
 	store    *store
+	locker   *locker
 	tus      *handler.UnroutedHandler
 	routed   http.Handler
 	log      *slog.Logger
@@ -77,12 +77,12 @@ func New(root *uploadroot.Root, basePath string, log *slog.Logger) (*Handler, er
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	h := &Handler{root: root, basePath: basePath, log: log, store: &store{root: root, log: log}}
+	h := &Handler{root: root, basePath: basePath, log: log, store: &store{root: root, log: log}, locker: newLocker()}
 
 	composer := handler.NewStoreComposer()
 	composer.UseCore(h.store)
 	composer.UseTerminater(h.store)
-	composer.UseLocker(memorylocker.New())
+	composer.UseLocker(h.locker)
 
 	cors := handler.DefaultCorsConfig
 	cors.ExposeHeaders += ", " + HeaderSHA256

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/uploadroot"
 )
@@ -15,14 +17,18 @@ import (
 // EnvVars lists every environment variable the service itself reads. compose.yaml-only
 // variables (UID/GID, Tailscale) are not here; the env-docs test reads those from
 // compose.yaml.
-var EnvVars = []string{envAddr, envUploadRoot, envCallers}
+var EnvVars = []string{envAddr, envUploadRoot, envCallers, envUploadExpiryDays}
 
 const (
-	envAddr           = "NAS_FILE_API_ADDR"
-	envUploadRoot     = "NAS_FILE_API_UPLOAD_ROOT"
-	envCallers        = "NAS_FILE_API_CALLERS"
-	defaultAddr       = ":8080"
-	defaultUploadRoot = "/data"
+	envAddr       = "NAS_FILE_API_ADDR"
+	envUploadRoot = "NAS_FILE_API_UPLOAD_ROOT"
+	envCallers    = "NAS_FILE_API_CALLERS"
+	// envUploadExpiryDays is how many days an incomplete Upload may go untouched
+	// before it is removed from the Staging Area.
+	envUploadExpiryDays     = "NAS_FILE_API_UPLOAD_EXPIRY_DAYS"
+	defaultUploadExpiryDays = 7
+	defaultAddr             = ":8080"
+	defaultUploadRoot       = "/data"
 
 	// minTokenHexLen is what `openssl rand -hex 32` prints (ADR-0004).
 	minTokenHexLen = 64
@@ -39,6 +45,9 @@ type Config struct {
 	UploadRoot string
 	// Callers are the Callers allowed to use the API, in config order.
 	Callers []Caller
+	// UploadExpiry is how long an incomplete Upload may go untouched before it is
+	// removed from the Staging Area.
+	UploadExpiry time.Duration
 }
 
 // Caller is one configured Caller (GLOSSARY.md).
@@ -65,6 +74,13 @@ func Load(getenv func(string) string) (Config, error) {
 		return c, fmt.Errorf("%s: %w", envCallers, err)
 	}
 	c.Callers = callers
+	days := defaultUploadExpiryDays
+	if v := getenv(envUploadExpiryDays); v != "" {
+		if days, err = strconv.Atoi(v); err != nil || days < 1 {
+			return c, fmt.Errorf("%s: want a whole number of days, at least 1", envUploadExpiryDays)
+		}
+	}
+	c.UploadExpiry = time.Duration(days) * 24 * time.Hour
 	return c, nil
 }
 

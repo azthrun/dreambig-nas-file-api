@@ -29,6 +29,7 @@ type env struct {
 	t     *testing.T
 	root  string
 	h     http.Handler
+	srv   *server.Server
 	audit *bytes.Buffer
 }
 
@@ -49,11 +50,11 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	audit := &bytes.Buffer{}
-	h, err := server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: audit})
+	srv, err := server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: audit, UploadExpiry: cfg.UploadExpiry})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &env{t: t, root: dir, audit: audit, h: h}
+	return &env{t: t, root: dir, audit: audit, h: srv, srv: srv}
 }
 
 func (e *env) mkdir(rel string) {
