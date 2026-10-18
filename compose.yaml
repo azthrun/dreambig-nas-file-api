@@ -1,0 +1,49 @@
+# Synology Container Manager Project (DS220+, linux/amd64).
+# Put this file, tailscale-serve.json and a filled-in copy of .env.example named .env
+# in the project folder. Values in ${...} come from that .env.
+#
+# The API is reachable only through the Tailscale sidecar, over HTTPS via
+# `tailscale serve` (ADR-0002). No service publishes a host port; CI checks this.
+name: dreambig-nas-file-api
+
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    restart: unless-stopped
+    hostname: ${NAS_FILE_API_TS_HOSTNAME:-nas-file-api}
+    environment:
+      TS_AUTHKEY: ${NAS_FILE_API_TS_AUTHKEY:-}
+      # Use the auth key only when there is no saved login state.
+      TS_AUTH_ONCE: "true"
+      TS_HOSTNAME: ${NAS_FILE_API_TS_HOSTNAME:-nas-file-api}
+      TS_EXTRA_ARGS: --advertise-tags=tag:nas-file-api
+      TS_STATE_DIR: /var/lib/tailscale
+      # Userspace networking: no tun device or NET_ADMIN, and nothing reaches the API
+      # from the tailnet except through `tailscale serve`.
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ${NAS_FILE_API_TS_STATE_NAS_PATH:?set NAS_FILE_API_TS_STATE_NAS_PATH in .env}:/var/lib/tailscale
+      - ./tailscale-serve.json:/config/serve.json:ro
+
+  api:
+    image: ghcr.io/azthrun/dreambig-nas-file-api:latest
+    platform: linux/amd64
+    restart: unless-stopped
+    # Shares the sidecar's network namespace; publishes nothing on the NAS.
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    # Run as the dedicated DSM user, never root.
+    user: "${NAS_FILE_API_UID:?set NAS_FILE_API_UID in .env}:${NAS_FILE_API_GID:?set NAS_FILE_API_GID in .env}"
+    environment:
+      # Loopback only: `tailscale serve` proxies to it from the shared namespace.
+      NAS_FILE_API_ADDR: 127.0.0.1:8080
+    volumes:
+      - ${NAS_FILE_API_UPLOAD_ROOT_NAS_PATH:?set NAS_FILE_API_UPLOAD_ROOT_NAS_PATH in .env}:/data
+    healthcheck:
+      test: ["CMD", "/nas-file-api", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

@@ -1,0 +1,7 @@
+/nas-file-api
+/dist/
+coverage.out
+.env
+.env.*
+!.env.example
+.DS_Store
