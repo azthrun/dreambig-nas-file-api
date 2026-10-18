@@ -461,6 +461,26 @@ func TestUploadsAreAuditedWithCallerAndDestinationPath(t *testing.T) {
 	}
 }
 
+// A refused create names the Destination Path the Caller sent, not the tus endpoint's
+// URL; with none sent, the path is empty.
+func TestRefusedUploadCreateAuditsTheRequestedDestinationPath(t *testing.T) {
+	e := newEnv(t)
+	e.create(adminToken, 1, meta{"mtime": "2021-03-04T05:06:07Z"})
+	e.create(adminToken, 1, hello("photos/a?.txt"))
+
+	lines := auditLines(t, e)
+	if len(lines) != 2 {
+		t.Fatalf("got %d audit lines, want 2: %s", len(lines), e.audit)
+	}
+	missing, invalid := lines[0], lines[1]
+	if missing["operation"] != "upload_create" || missing["path"] != "" || missing["outcome"] != "rejected" {
+		t.Errorf("create without path line = %v", missing)
+	}
+	if invalid["operation"] != "upload_create" || invalid["path"] != "photos/a?.txt" || invalid["outcome"] != "rejected" {
+		t.Errorf("create with an invalid path line = %v", invalid)
+	}
+}
+
 // Over a real connection, as behind `tailscale serve`: the Location URL a client
 // follows is https on the public host.
 func TestLocationHonoursTheProxysForwardedHeaders(t *testing.T) {

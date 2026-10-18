@@ -226,6 +226,8 @@ func (h *Handler) preCreate(ev handler.HookEvent) (handler.HTTPResponse, handler
 	if !ok {
 		return handler.HTTPResponse{}, none, errInternal
 	}
+	// A refusal names the Destination Path as sent until it is parsed, never the URL.
+	rec.SetPath(ev.Upload.MetaData[MetaPath])
 	d, err := parseMeta(ev.Upload.MetaData)
 	if err != nil {
 		return handler.HTTPResponse{}, none, err

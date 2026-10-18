@@ -56,6 +56,7 @@ type Record struct {
 	caller    string
 	operation string
 	path      string
+	pathSet   bool
 	outcome   string
 	bytes     int64
 	bytesSet  bool
@@ -79,8 +80,9 @@ func (r *Record) SetCaller(name string) { r.set(func() { r.caller = name }) }
 func (r *Record) SetOperation(op string) { r.set(func() { r.operation = op }) }
 
 // SetPath records the Upload Root-relative path the request acted on (uploadroot.Path
-// String form). Defaults to the raw request path.
-func (r *Record) SetPath(p string) { r.set(func() { r.path = p }) }
+// String form), or, for a path refused before it could be parsed, what the Caller sent
+// ("" when nothing was sent). Defaults to the raw request path.
+func (r *Record) SetPath(p string) { r.set(func() { r.path, r.pathSet = p, true }) }
 
 // SetOutcome overrides the outcome derived from the status code.
 func (r *Record) SetOutcome(o string) { r.set(func() { r.outcome = o }) }
@@ -112,11 +114,14 @@ func (l *Logger) Middleware(next http.Handler) http.Handler {
 			Time:       start.UTC(),
 			Caller:     rec.caller,
 			Operation:  cmp.Or(rec.operation, req.Method),
-			Path:       cmp.Or(rec.path, req.URL.EscapedPath()),
+			Path:       req.URL.EscapedPath(),
 			Outcome:    cmp.Or(rec.outcome, outcomeOf(status)),
 			Status:     status,
 			Bytes:      cw.n,
 			DurationMS: l.now().Sub(start).Milliseconds(),
+		}
+		if rec.pathSet {
+			line.Path = rec.path
 		}
 		if rec.bytesSet {
 			line.Bytes = rec.bytes
