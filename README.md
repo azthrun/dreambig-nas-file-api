@@ -114,6 +114,7 @@ The image is `ghcr.io/azthrun/dreambig-nas-file-api` (`linux/amd64`). CI publish
    - `NAS_FILE_API_TS_AUTHKEY`: the key from step 5.
    - `NAS_FILE_API_TS_HOSTNAME=nas-file-api` (or your own machine name).
    - `NAS_FILE_API_CALLERS`: one entry per Caller, comma-separated, as `name:token` or `name:token:/scope` (format in `.env.example`). Generate each token on the Mac with `openssl rand -hex 32` and give it only to that Caller. The service refuses to start on placeholder or short tokens, or duplicate names.
+   - Optional: `NAS_FILE_API_UPLOAD_EXPIRY_DAYS` (default `7`): an incomplete Upload untouched this many days is removed from the Staging Area (checked at startup and hourly; each removal is in the audit log).
    - Leave `NAS_FILE_API_ADDR` and `NAS_FILE_API_UPLOAD_ROOT` as they are. `compose.yaml` overrides the first; the second is already `/data`.
 4. Upload `env.txt` into `docker/dreambig-nas-file-api` and rename it to `.env`. To see it afterwards, tick **File Station > Settings > General > Show hidden files**.
 5. Upload [`tailscale-serve.json`](tailscale-serve.json) into the same folder, keeping its name. `compose.yaml` mounts it as `./tailscale-serve.json`. If it is missing, Docker creates an empty folder with that name and the sidecar won't serve HTTPS.

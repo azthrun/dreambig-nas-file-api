@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/tus/tusd/v2/pkg/handler"
-	"github.com/tus/tusd/v2/pkg/memorylocker"
 	expslog "golang.org/x/exp/slog"
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/audit"
@@ -66,23 +65,25 @@ type Handler struct {
 	root     *uploadroot.Root
 	basePath string
 	store    *store
+	locker   *locker
 	tus      *handler.UnroutedHandler
 	routed   http.Handler
 	log      *slog.Logger
 }
 
 // New returns a Handler for Uploads into root, served under basePath (e.g.
-// "/api/v1/uploads/"). log receives operational errors; nil discards them.
-func New(root *uploadroot.Root, basePath string, log *slog.Logger) (*Handler, error) {
+// "/api/v1/uploads/"), refusing new Uploads that would break limits. log receives
+// operational errors; nil discards them.
+func New(root *uploadroot.Root, basePath string, limits Limits, log *slog.Logger) (*Handler, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	h := &Handler{root: root, basePath: basePath, log: log, store: &store{root: root, log: log}}
+	h := &Handler{root: root, basePath: basePath, log: log, store: &store{root: root, log: log, limits: limits}, locker: newLocker()}
 
 	composer := handler.NewStoreComposer()
 	composer.UseCore(h.store)
 	composer.UseTerminater(h.store)
-	composer.UseLocker(memorylocker.New())
+	composer.UseLocker(h.locker)
 
 	cors := handler.DefaultCorsConfig
 	cors.ExposeHeaders += ", " + HeaderSHA256

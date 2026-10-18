@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,20 @@ type Deps struct {
 	Audit io.Writer
 	// Log receives operational errors (stderr in production); nil discards them.
 	Log *slog.Logger
+	// Limits restrict new Uploads; the zero value imposes none.
+	Limits upload.Limits
+	// UploadExpiry is how long an incomplete Upload may go untouched before
+	// ExpireUploads removes it (config.Config.UploadExpiry).
+	UploadExpiry time.Duration
+}
+
+// Server is the service's HTTP handler plus its background upkeep.
+type Server struct {
+	http.Handler
+	uploads      *upload.Handler
+	audit        *audit.Logger
+	log          *slog.Logger
+	uploadExpiry time.Duration
 }
 
 // uploadsPath is where the tus endpoint for Uploads lives (ADR-0003).
@@ -39,20 +54,28 @@ const uploadsPath = apiPrefix + "uploads/"
 // Requests under /api/v1/ are routed without http.ServeMux, whose path cleaning would
 // silently redirect "..", "." and "//" instead of letting the path validator refuse
 // them.
-func New(d Deps) (http.Handler, error) {
-	uploads, err := upload.New(d.Root, uploadsPath, d.Log)
+func New(d Deps) (*Server, error) {
+	if d.UploadExpiry <= 0 {
+		return nil, errors.New("UploadExpiry must be positive")
+	}
+	log := d.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	uploads, err := upload.New(d.Root, uploadsPath, d.Limits, log)
 	if err != nil {
 		return nil, fmt.Errorf("uploads: %w", err)
 	}
+	auditLog := audit.New(d.Audit)
 	api := auth.New(d.Callers).Middleware(&apiHandler{root: d.Root, uploads: uploads})
-	audited := audit.New(d.Audit).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	audited := auditLog.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, apiPrefix) || r.URL.Path == strings.TrimSuffix(apiPrefix, "/") {
 			api.ServeHTTP(w, r)
 			return
 		}
 		http.NotFound(w, r)
 	}))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Liveness only; no Credential needed, reveals nothing about the Upload Root.
 		if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -60,7 +83,34 @@ func New(d Deps) (http.Handler, error) {
 			return
 		}
 		audited.ServeHTTP(w, r)
-	}), nil
+	})
+	return &Server{Handler: h, uploads: uploads, audit: auditLog, log: log, uploadExpiry: d.UploadExpiry}, nil
+}
+
+// ExpireUploads removes incomplete Uploads untouched for longer than UploadExpiry,
+// logging one audit line per removal.
+func (s *Server) ExpireUploads(ctx context.Context) error {
+	expired, err := s.uploads.ExpireAbandoned(ctx, s.uploadExpiry)
+	for _, x := range expired {
+		s.audit.Event(x.Caller, "upload_expire", x.Path, "expired", x.Bytes)
+	}
+	return err
+}
+
+// RunUploadExpiry runs ExpireUploads now and then every interval until ctx is done.
+func (s *Server) RunUploadExpiry(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		if err := s.ExpireUploads(ctx); err != nil && ctx.Err() == nil {
+			s.log.ErrorContext(ctx, "expire uploads", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // apiHandler serves the authenticated routes.

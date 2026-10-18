@@ -19,7 +19,7 @@ type Line struct {
 	Operation  string    `json:"operation"`
 	Path       string    `json:"path"`
 	Outcome    string    `json:"outcome"`
-	Status     int       `json:"status"`
+	Status     int       `json:"status,omitempty"` // absent for the service's own actions
 	Bytes      int64     `json:"bytes"`
 	DurationMS int64     `json:"duration_ms"`
 }
@@ -40,6 +40,12 @@ func (l *Logger) write(line Line) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	_ = l.enc.Encode(line) // stdout failing is not a reason to fail the request
+}
+
+// Event logs an action the service took on its own, outside any request (e.g. removing
+// an abandoned Upload): caller is whose data it acted on.
+func (l *Logger) Event(caller, operation, path, outcome string, bytes int64) {
+	l.write(Line{Time: l.now().UTC(), Caller: caller, Operation: operation, Path: path, Outcome: outcome, Bytes: bytes})
 }
 
 // Record collects what a request did, for its audit line. Handlers fill it in through

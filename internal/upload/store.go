@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/tus/tusd/v2/pkg/filestore"
 	"github.com/tus/tusd/v2/pkg/handler"
@@ -24,11 +25,13 @@ var errInternal = handler.NewError("ERR_INTERNAL_SERVER_ERROR", "internal error"
 // Staging Area, created on first use, with errors scrubbed of NAS paths.
 //
 // It is the seam for follow-ups: expiring abandoned Uploads (#9) lists and terminates
-// what is here; a free-space reserve or per-Caller limit (#10) belongs in NewUpload and
-// WriteChunk.
+// what is here; NewUpload enforces the Limits (#10).
 type store struct {
-	root *uploadroot.Root
-	log  *slog.Logger
+	root   *uploadroot.Root
+	log    *slog.Logger
+	limits Limits
+	// admitMu makes checking the Limits and creating the Upload one step.
+	admitMu sync.Mutex
 }
 
 // files returns the filestore over the Staging Area, creating the folder if needed.
@@ -46,6 +49,11 @@ func (s *store) NewUpload(ctx context.Context, info handler.FileInfo) (handler.U
 	fs, err := s.files()
 	if err != nil {
 		return nil, s.scrub(ctx, "staging: new upload", err)
+	}
+	s.admitMu.Lock()
+	defer s.admitMu.Unlock()
+	if err := s.admit(ctx, fs, info); err != nil {
+		return nil, err
 	}
 	u, err := fs.NewUpload(ctx, info)
 	if err != nil {
