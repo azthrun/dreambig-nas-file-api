@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -148,8 +149,8 @@ func (r *Root) resolveExisting(p Path) (Path, error) {
 	for n := len(segs); n >= 0; n-- {
 		abs := filepath.Join(append([]string{r.real}, segs[:n]...)...)
 		real, err := filepath.EvalSymlinks(abs)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			continue // missing, or a file stands in for a parent; the caller decides
 		}
 		if err != nil {
 			return Path{}, fmt.Errorf("resolve path: %w", err)
