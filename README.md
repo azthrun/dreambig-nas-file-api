@@ -250,7 +250,7 @@ Uploads use the [tus protocol](https://tus.io/protocols/resumable-upload) at `$N
 | `mtime` | The file's modification time, RFC 3339 (e.g. `2021-03-04T05:06:07Z`); required. The file gets this mtime. |
 | `sha256` | The whole file's SHA-256, hex; optional. If it doesn't match, the Upload is refused and discarded. |
 
-The response that completes the Upload carries the server's SHA-256 of the file in `Upload-Sha256`. Nothing is ever overwritten: if the Destination Path already holds a file, creating the Upload (or completing it, if the file appeared meanwhile) fails with `409`. A SHA-256 mismatch fails with `460`. An unfinished Upload can be resumed by the Caller that created it.
+The response that completes the Upload carries the server's SHA-256 of the file in `Upload-Sha256`. Nothing is ever overwritten: if the Destination Path already holds a file, creating the Upload (or completing it, if the file appeared meanwhile) fails with `409`. A SHA-256 mismatch fails with `460`. Creating an Upload fails with `429` (and `Retry-After`) when the Caller already has too many Uploads in progress, and with `507` when the NAS lacks the space. An unfinished Upload can be resumed by the Caller that created it.
 
 #### With curl
 
@@ -290,6 +290,14 @@ tail -c +$((offset + 1)) "$f" | curl -sS -D - -o /dev/null -X PATCH "$upload" \
   -H "Authorization: Bearer $NAS_TOKEN" -H "Tus-Resumable: 1.0.0" \
   -H "Content-Type: application/offset+octet-stream" -H "Upload-Offset: $offset" \
   -T -
+```
+
+To give up on an Upload instead, cancel it, so it stops counting as in progress:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' -X DELETE "$upload" \
+  -H "Authorization: Bearer $NAS_TOKEN" -H "Tus-Resumable: 1.0.0"
+# 204
 ```
 
 #### With Python (tus-py-client)
