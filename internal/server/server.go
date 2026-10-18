@@ -66,6 +66,13 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.listFolder(w, r, strings.TrimPrefix(strings.TrimPrefix(rest, "/folders"), "/"))
+	case rest == "/tree" || strings.HasPrefix(rest, "/tree/"):
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.listTree(w, r, strings.TrimPrefix(strings.TrimPrefix(rest, "/tree"), "/"))
 	default:
 		writeError(w, http.StatusNotFound, "no such route")
 	}
