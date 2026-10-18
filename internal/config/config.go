@@ -3,6 +3,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -79,8 +80,8 @@ type Caller struct {
 // name or token (ADR-0004). Errors never contain token material.
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{
-		Addr:       orDefault(getenv(envAddr), defaultAddr),
-		UploadRoot: orDefault(getenv(envUploadRoot), defaultUploadRoot),
+		Addr:       cmp.Or(getenv(envAddr), defaultAddr),
+		UploadRoot: cmp.Or(getenv(envUploadRoot), defaultUploadRoot),
 	}
 	callers, err := parseCallers(getenv(envCallers))
 	if err != nil {
@@ -115,13 +116,6 @@ func parseInt(s string, def, lo, hi int64) (int64, error) {
 		return 0, fmt.Errorf("want a whole number from %d to %d, got %q", lo, hi, s)
 	}
 	return n, nil
-}
-
-func orDefault(v, def string) string {
-	if v == "" {
-		return def
-	}
-	return v
 }
 
 // parseCallers parses "name:token[:/scope],name:token[:/scope],...".

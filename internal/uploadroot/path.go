@@ -156,8 +156,6 @@ func (p Path) Segments() []string { return append([]string{}, p.segs...) }
 // contains the Upload Root's absolute NAS path.
 func (p Path) String() string { return "/" + strings.Join(p.segs, "/") }
 
-func isValidUTF8(s string) bool { return strings.ToValidUTF8(s, "�") == s }
-
 func invalid(why string) error { return &pathError{why: why} }
 
 type pathError struct{ why string }

@@ -36,9 +36,6 @@ type Limits struct {
 // retryAfterSeconds is what a Caller over its Upload limit is told to wait.
 const retryAfterSeconds = "30"
 
-// statusInsufficientStorage is WebDAV's 507, for a volume that cannot take the Upload.
-const statusInsufficientStorage = http.StatusInsufficientStorage
-
 func errTooManyUploads(max int) error {
 	err := handler.NewError("ERR_TOO_MANY_UPLOADS",
 		fmt.Sprintf("you already have %d active Uploads, the most allowed; retry once one completes or is cancelled", max),
@@ -49,7 +46,7 @@ func errTooManyUploads(max int) error {
 
 var errInsufficientSpace = handler.NewError("ERR_INSUFFICIENT_SPACE",
 	"the NAS does not have room for this Upload while keeping its free-space reserve",
-	statusInsufficientStorage)
+	http.StatusInsufficientStorage) // WebDAV's 507: the volume cannot take the Upload
 
 // admit refuses a new Upload that would break the Limits. The caller holds s.admitMu
 // until the Upload is created, so concurrent creates cannot both squeeze in.

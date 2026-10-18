@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -110,9 +111,9 @@ func (l *Logger) Middleware(next http.Handler) http.Handler {
 		line := Line{
 			Time:       start.UTC(),
 			Caller:     rec.caller,
-			Operation:  orDefault(rec.operation, req.Method),
-			Path:       orDefault(rec.path, req.URL.EscapedPath()),
-			Outcome:    orDefault(rec.outcome, outcomeOf(status)),
+			Operation:  cmp.Or(rec.operation, req.Method),
+			Path:       cmp.Or(rec.path, req.URL.EscapedPath()),
+			Outcome:    cmp.Or(rec.outcome, outcomeOf(status)),
 			Status:     status,
 			Bytes:      cw.n,
 			DurationMS: l.now().Sub(start).Milliseconds(),
@@ -140,13 +141,6 @@ func outcomeOf(status int) string {
 	default:
 		return "error"
 	}
-}
-
-func orDefault(v, def string) string {
-	if v == "" {
-		return def
-	}
-	return v
 }
 
 type countingWriter struct {
