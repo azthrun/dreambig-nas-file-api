@@ -72,12 +72,13 @@ type Handler struct {
 }
 
 // New returns a Handler for Uploads into root, served under basePath (e.g.
-// "/api/v1/uploads/"). log receives operational errors; nil discards them.
-func New(root *uploadroot.Root, basePath string, log *slog.Logger) (*Handler, error) {
+// "/api/v1/uploads/"), refusing new Uploads that would break limits. log receives
+// operational errors; nil discards them.
+func New(root *uploadroot.Root, basePath string, limits Limits, log *slog.Logger) (*Handler, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	h := &Handler{root: root, basePath: basePath, log: log, store: &store{root: root, log: log}}
+	h := &Handler{root: root, basePath: basePath, log: log, store: &store{root: root, log: log, limits: limits}}
 
 	composer := handler.NewStoreComposer()
 	composer.UseCore(h.store)

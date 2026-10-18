@@ -48,6 +48,55 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.UploadRoot != "/data" {
 		t.Errorf("UploadRoot = %q, want /data", cfg.UploadRoot)
 	}
+	if cfg.FreeSpaceReserve != 20_000_000_000 {
+		t.Errorf("FreeSpaceReserve = %d, want 20 GB", cfg.FreeSpaceReserve)
+	}
+	if cfg.MaxActiveUploadsPerCaller != 4 {
+		t.Errorf("MaxActiveUploadsPerCaller = %d, want 4", cfg.MaxActiveUploadsPerCaller)
+	}
+}
+
+func TestLoadUploadLimits(t *testing.T) {
+	cfg, err := config.Load(env(map[string]string{
+		"NAS_FILE_API_CALLERS":                       "laptop:" + tokenA,
+		"NAS_FILE_API_FREE_SPACE_RESERVE_GB":         "0",
+		"NAS_FILE_API_MAX_ACTIVE_UPLOADS_PER_CALLER": "16",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FreeSpaceReserve != 0 || cfg.MaxActiveUploadsPerCaller != 16 {
+		t.Errorf("FreeSpaceReserve = %d, MaxActiveUploadsPerCaller = %d; want 0, 16", cfg.FreeSpaceReserve, cfg.MaxActiveUploadsPerCaller)
+	}
+	cfg, err = config.Load(env(map[string]string{
+		"NAS_FILE_API_CALLERS":               "laptop:" + tokenA,
+		"NAS_FILE_API_FREE_SPACE_RESERVE_GB": "500",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FreeSpaceReserve != 500_000_000_000 {
+		t.Errorf("FreeSpaceReserve = %d, want 500 GB", cfg.FreeSpaceReserve)
+	}
+}
+
+func TestLoadRefusesBadUploadLimits(t *testing.T) {
+	cases := map[string]map[string]string{
+		"reserve not a number":   {"NAS_FILE_API_FREE_SPACE_RESERVE_GB": "20GB"},
+		"negative reserve":       {"NAS_FILE_API_FREE_SPACE_RESERVE_GB": "-1"},
+		"overflowing reserve":    {"NAS_FILE_API_FREE_SPACE_RESERVE_GB": "99999999999"},
+		"zero Uploads":           {"NAS_FILE_API_MAX_ACTIVE_UPLOADS_PER_CALLER": "0"},
+		"Uploads not a number":   {"NAS_FILE_API_MAX_ACTIVE_UPLOADS_PER_CALLER": "four"},
+		"negative Uploads limit": {"NAS_FILE_API_MAX_ACTIVE_UPLOADS_PER_CALLER": "-4"},
+	}
+	for name, m := range cases {
+		t.Run(name, func(t *testing.T) {
+			m["NAS_FILE_API_CALLERS"] = "laptop:" + tokenA
+			if _, err := config.Load(env(m)); err == nil {
+				t.Fatalf("Load(%v) succeeded, want error", m)
+			}
+		})
+	}
 }
 
 // Load refuses to start the service on any Callers value that would leave it guessable

@@ -19,6 +19,7 @@ import (
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/config"
 	"github.com/azthrun/dreambig-nas-file-api/internal/server"
+	"github.com/azthrun/dreambig-nas-file-api/internal/upload"
 	"github.com/azthrun/dreambig-nas-file-api/internal/uploadroot"
 )
 
@@ -62,7 +63,13 @@ func run(cfg config.Config, log *slog.Logger) error {
 		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 	}
 	// The audit log goes to stdout, operational logs to stderr.
-	handler, err := server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: os.Stdout, Log: log})
+	handler, err := server.New(server.Deps{
+		Root: root, Callers: cfg.Callers, Audit: os.Stdout, Log: log,
+		Limits: upload.Limits{
+			MaxActivePerCaller: cfg.MaxActiveUploadsPerCaller,
+			FreeSpaceReserve:   cfg.FreeSpaceReserve,
+		},
+	})
 	if err != nil {
 		return err
 	}

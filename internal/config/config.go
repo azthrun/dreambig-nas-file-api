@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/uploadroot"
@@ -15,14 +17,21 @@ import (
 // EnvVars lists every environment variable the service itself reads. compose.yaml-only
 // variables (UID/GID, Tailscale) are not here; the env-docs test reads those from
 // compose.yaml.
-var EnvVars = []string{envAddr, envUploadRoot, envCallers}
+var EnvVars = []string{envAddr, envUploadRoot, envCallers, envFreeSpaceReserveGB, envMaxActiveUploads}
 
 const (
-	envAddr           = "NAS_FILE_API_ADDR"
-	envUploadRoot     = "NAS_FILE_API_UPLOAD_ROOT"
-	envCallers        = "NAS_FILE_API_CALLERS"
-	defaultAddr       = ":8080"
-	defaultUploadRoot = "/data"
+	envAddr               = "NAS_FILE_API_ADDR"
+	envUploadRoot         = "NAS_FILE_API_UPLOAD_ROOT"
+	envCallers            = "NAS_FILE_API_CALLERS"
+	envFreeSpaceReserveGB = "NAS_FILE_API_FREE_SPACE_RESERVE_GB"
+	envMaxActiveUploads   = "NAS_FILE_API_MAX_ACTIVE_UPLOADS_PER_CALLER"
+	defaultAddr           = ":8080"
+	defaultUploadRoot     = "/data"
+	defaultReserveGB      = 20
+	defaultMaxActive      = 4
+
+	// gb is a decimal gigabyte, as `df -H` and most disk labels count.
+	gb = 1_000_000_000
 
 	// minTokenHexLen is what `openssl rand -hex 32` prints (ADR-0004).
 	minTokenHexLen = 64
@@ -39,6 +48,11 @@ type Config struct {
 	UploadRoot string
 	// Callers are the Callers allowed to use the API, in config order.
 	Callers []Caller
+	// FreeSpaceReserve is the free space, in bytes, that Uploads must leave on the
+	// Upload Root's volume.
+	FreeSpaceReserve int64
+	// MaxActiveUploadsPerCaller is how many unfinished Uploads one Caller may have.
+	MaxActiveUploadsPerCaller int
 }
 
 // Caller is one configured Caller (GLOSSARY.md).
@@ -65,7 +79,29 @@ func Load(getenv func(string) string) (Config, error) {
 		return c, fmt.Errorf("%s: %w", envCallers, err)
 	}
 	c.Callers = callers
+	reserveGB, err := parseInt(getenv(envFreeSpaceReserveGB), defaultReserveGB, 0, math.MaxInt64/gb)
+	if err != nil {
+		return c, fmt.Errorf("%s: %w", envFreeSpaceReserveGB, err)
+	}
+	c.FreeSpaceReserve = reserveGB * gb
+	maxActive, err := parseInt(getenv(envMaxActiveUploads), defaultMaxActive, 1, math.MaxInt32)
+	if err != nil {
+		return c, fmt.Errorf("%s: %w", envMaxActiveUploads, err)
+	}
+	c.MaxActiveUploadsPerCaller = int(maxActive)
 	return c, nil
+}
+
+// parseInt parses a whole number in [lo, hi], or returns def for "".
+func parseInt(s string, def, lo, hi int64) (int64, error) {
+	if s == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < lo || n > hi {
+		return 0, fmt.Errorf("want a whole number from %d to %d, got %q", lo, hi, s)
+	}
+	return n, nil
 }
 
 func orDefault(v, def string) string {

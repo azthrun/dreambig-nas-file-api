@@ -29,6 +29,8 @@ type Deps struct {
 	Audit io.Writer
 	// Log receives operational errors (stderr in production); nil discards them.
 	Log *slog.Logger
+	// Limits restrict new Uploads; the zero value imposes none.
+	Limits upload.Limits
 }
 
 // uploadsPath is where the tus endpoint for Uploads lives (ADR-0003).
@@ -40,7 +42,7 @@ const uploadsPath = apiPrefix + "uploads/"
 // silently redirect "..", "." and "//" instead of letting the path validator refuse
 // them.
 func New(d Deps) (http.Handler, error) {
-	uploads, err := upload.New(d.Root, uploadsPath, d.Log)
+	uploads, err := upload.New(d.Root, uploadsPath, d.Limits, d.Log)
 	if err != nil {
 		return nil, fmt.Errorf("uploads: %w", err)
 	}
