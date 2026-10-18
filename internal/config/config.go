@@ -2,10 +2,10 @@
 // the environment.
 package config
 
-// Vars lists every environment variable the service itself reads. compose.yaml-only
+// EnvVars lists every environment variable the service itself reads. compose.yaml-only
 // variables (UID/GID, Tailscale) are not here; the env-docs test reads those from
 // compose.yaml.
-var Vars = []string{envAddr}
+var EnvVars = []string{envAddr}
 
 const (
 	envAddr     = "NAS_FILE_API_ADDR"

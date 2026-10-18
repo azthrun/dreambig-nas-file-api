@@ -16,7 +16,6 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 # --- runtime: the binary alone, no shell ---
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/nas-file-api /nas-file-api
-ENV NAS_FILE_API_ADDR=:8080
 # The binary is root-owned and world-readable, so any UID/GID can run it but none can modify it.
 # Default to distroless's unprivileged "nonroot" user; compose overrides with the owner's UID/GID.
 USER 65532:65532

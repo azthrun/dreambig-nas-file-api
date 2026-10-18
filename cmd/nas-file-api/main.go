@@ -45,28 +45,31 @@ func run(cfg config.Config, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+	}
 	srv := &http.Server{
-		Addr:              cfg.Addr,
 		Handler:           server.New(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-	log.Info("listening", "addr", cfg.Addr)
+	go func() { errc <- srv.Serve(ln) }()
+	log.Info("listening", "addr", ln.Addr().String())
 
 	select {
 	case err := <-errc:
-		return err
+		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return err
+		return fmt.Errorf("shutdown: %w", err)
 	}
 	if err := <-errc; !errors.Is(err, http.ErrServerClosed) {
-		return err
+		return fmt.Errorf("serve: %w", err)
 	}
 	return nil
 }
@@ -75,7 +78,7 @@ func run(cfg config.Config, log *slog.Logger) error {
 func probe(addr string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse NAS_FILE_API_ADDR %q: %w", addr, err)
 	}
 	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
 		host = "127.0.0.1"
@@ -83,7 +86,7 @@ func probe(addr string) error {
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/healthz")
 	if err != nil {
-		return err
+		return fmt.Errorf("GET /healthz: %w", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

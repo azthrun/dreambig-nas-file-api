@@ -3,7 +3,7 @@ name: CI
 # Every push: go vet, tests, build, gitleaks history scan, compose validation, image
 # build and smoke test. A v* tag push additionally publishes the image to GHCR; only
 # that job gets packages: write.
-# No workflow uploads artifacts; caches are kept small (Go cache, min-mode Docker layer cache).
+# No workflow uploads artifacts; caches are kept small (Go cache, Docker layer cache incl. the build stage, so publish reuses the tested binary).
 
 on:
   push:
@@ -58,8 +58,8 @@ jobs:
           cp .env.example .env
           docker compose -f compose.yaml config --quiet
           docker compose -f compose.yaml config --format json \
-            | jq -e '[.services[] | select(has("ports"))] | length == 0' > /dev/null \
-            || { echo "compose.yaml publishes a host port" >&2; exit 1; }
+            | jq -e '[.services[] | select(has("ports") or .network_mode == "host")] | length == 0' > /dev/null \
+            || { echo "compose.yaml publishes a host port or uses host networking" >&2; exit 1; }
           rm .env
 
       - uses: docker/setup-buildx-action@v4
@@ -73,7 +73,7 @@ jobs:
           push: false
           tags: ${{ env.IMAGE }}:ci
           cache-from: type=gha,scope=image
-          cache-to: type=gha,scope=image,mode=min
+          cache-to: type=gha,scope=image,mode=max
 
       - name: Smoke test image
         run: scripts/smoke-test.sh "$IMAGE:ci"

@@ -17,13 +17,13 @@ Read during review. Terms (Upload Root, Caller, Credential, Scope, Destination P
 
 ## Config
 
-- Settings come from `NAS_FILE_API_*` env vars parsed in `internal/config`; no other package calls `os.Getenv`. A new variable is added to `config.Vars` and `.env.example` (`internal/config/envdocs_test.go` checks both ways).
+- Settings come from `NAS_FILE_API_*` env vars parsed in `internal/config` (`main` passes it `os.Getenv`); nothing else reads the environment. A new variable is added to `config.EnvVars` and `.env.example` (`internal/config/envdocs_test.go` checks both ways).
 - Secrets live only in `.env` on the NAS or CI secrets, never in the repo. Docs and examples use placeholders (`nas-file-api.<tailnet>.ts.net`, `<token>`), never the owner's real values.
 
 ## Deployment
 
-- `compose.yaml` publishes no host port (ADR-0002; CI checks this). The API listens on loopback and is reached only through `tailscale serve`.
-- The image runs as a non-root UID/GID and contains only the static binary.
+- `compose.yaml` publishes no host port and uses no host networking (ADR-0002; CI checks this). The API listens on loopback and is reached only through `tailscale serve`.
+- The image runs as a non-root UID/GID and is the static binary on distroless `static` (no shell, no package manager).
 
 ## Go
 

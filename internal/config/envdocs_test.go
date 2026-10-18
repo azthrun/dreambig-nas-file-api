@@ -25,7 +25,7 @@ func varsIn(t *testing.T, name string) []string {
 // .env.example, and .env.example documents nothing else.
 func TestEnvExampleDocumentsExactlyTheVariablesInUse(t *testing.T) {
 	documented := varsIn(t, ".env.example")
-	used := append(slices.Clone(config.Vars), varsIn(t, "compose.yaml")...)
+	used := append(slices.Clone(config.EnvVars), varsIn(t, "compose.yaml")...)
 
 	for _, v := range used {
 		if !slices.Contains(documented, v) {

@@ -13,6 +13,8 @@ services:
     hostname: ${NAS_FILE_API_TS_HOSTNAME:-nas-file-api}
     environment:
       TS_AUTHKEY: ${NAS_FILE_API_TS_AUTHKEY:-}
+      # Use the auth key only when there is no saved login state.
+      TS_AUTH_ONCE: "true"
       TS_HOSTNAME: ${NAS_FILE_API_TS_HOSTNAME:-nas-file-api}
       TS_EXTRA_ARGS: --advertise-tags=tag:nas-file-api
       TS_STATE_DIR: /var/lib/tailscale
