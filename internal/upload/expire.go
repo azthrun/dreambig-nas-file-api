@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/tus/tusd/v2/pkg/filestore"
@@ -31,18 +29,14 @@ func (h *Handler) ExpireAbandoned(ctx context.Context, maxAge time.Duration) ([]
 	if err != nil {
 		return nil, fmt.Errorf("expire uploads: %w", err)
 	}
-	entries, err := os.ReadDir(dir)
+	ids, err := h.store.stagedIDs()
 	if err != nil {
-		return nil, fmt.Errorf("expire uploads: list Staging Area: %w", err)
+		return nil, fmt.Errorf("expire uploads: %w", err)
 	}
 	var out []Expired
-	for _, e := range entries {
+	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return out, err
-		}
-		id, ok := strings.CutSuffix(e.Name(), ".info")
-		if !ok || !idRe.MatchString(id) {
-			continue
 		}
 		x, removed, err := h.expireOne(ctx, dir, id, maxAge)
 		if err != nil {
@@ -56,8 +50,9 @@ func (h *Handler) ExpireAbandoned(ctx context.Context, maxAge time.Duration) ([]
 	return out, nil
 }
 
+// expireOne removes the Upload id if it is abandoned; dir is the Staging Area's OS path.
 func (h *Handler) expireOne(ctx context.Context, dir, id string, maxAge time.Duration) (Expired, bool, error) {
-	if stale, err := untouchedFor(dir, id, maxAge); err != nil || !stale {
+	if stale, err := h.untouchedFor(id, maxAge); err != nil || !stale {
 		return Expired{}, false, err
 	}
 	unlock, ok := h.locker.tryLock(id)
@@ -66,7 +61,7 @@ func (h *Handler) expireOne(ctx context.Context, dir, id string, maxAge time.Dur
 	}
 	defer unlock()
 	// Re-check under the lock: a request may have written to it just before.
-	if stale, err := untouchedFor(dir, id, maxAge); err != nil || !stale {
+	if stale, err := h.untouchedFor(id, maxAge); err != nil || !stale {
 		return Expired{}, false, err
 	}
 	u, err := h.store.GetUpload(ctx, id)
@@ -91,10 +86,10 @@ func (h *Handler) expireOne(ctx context.Context, dir, id string, maxAge time.Dur
 
 // untouchedFor reports whether the Upload id's staged data and info were both last
 // modified more than maxAge ago. A missing data file counts as untouched.
-func untouchedFor(dir, id string, maxAge time.Duration) (bool, error) {
+func (h *Handler) untouchedFor(id string, maxAge time.Duration) (bool, error) {
 	cutoff := time.Now().Add(-maxAge)
 	for _, name := range []string{id + ".info", id} {
-		fi, err := os.Lstat(filepath.Join(dir, name))
+		fi, err := h.root.LstatStaged(name)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}

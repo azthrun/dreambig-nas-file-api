@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/tus/tusd/v2/pkg/filestore"
 	"github.com/tus/tusd/v2/pkg/handler"
@@ -98,16 +96,12 @@ func (s *store) freeSpace() (int64, error) {
 
 // active lists the active Uploads in the Staging Area.
 func (s *store) active(ctx context.Context, fs filestore.FileStore) ([]handler.FileInfo, error) {
-	des, err := os.ReadDir(fs.Path)
+	ids, err := s.stagedIDs()
 	if err != nil {
-		return nil, fmt.Errorf("read Staging Area: %w", err)
+		return nil, err
 	}
 	var out []handler.FileInfo
-	for _, de := range des {
-		id, ok := strings.CutSuffix(de.Name(), ".info")
-		if !ok || !idRe.MatchString(id) {
-			continue
-		}
+	for _, id := range ids {
 		u, err := fs.GetUpload(ctx, id)
 		if errors.Is(err, handler.ErrNotFound) {
 			continue // completed or cancelled meanwhile

@@ -31,6 +31,43 @@ func (r *Root) StagingDir() (string, error) {
 	return filepath.Join(r.real, StagingDirName), nil
 }
 
+// StagedNames lists the names directly in the Staging Area, read through the Upload
+// Root's os.Root.
+func (r *Root) StagedNames() ([]string, error) {
+	if _, err := r.StagingDir(); err != nil {
+		return nil, err
+	}
+	f, err := r.os.Open(StagingDirName)
+	if err != nil {
+		return nil, fmt.Errorf("open Staging Area: %w", err)
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		return nil, fmt.Errorf("read Staging Area: %w", err)
+	}
+	return names, nil
+}
+
+// LstatStaged describes the Staging Area entry name (a bare name), without following
+// a symlink.
+func (r *Root) LstatStaged(name string) (fs.FileInfo, error) {
+	rel, err := stagedRel(name)
+	if err != nil {
+		return nil, err
+	}
+	return r.os.Lstat(rel)
+}
+
+// stagedRel is the Upload Root-relative OS path of the Staging Area entry name, which
+// must be a bare name.
+func stagedRel(name string) (string, error) {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("bad staged name %q", name)
+	}
+	return filepath.Join(StagingDirName, name), nil
+}
+
 // CheckNewFile refuses a new file at p for a Caller with the given Scope unless p
 // passes the write-side path rules, is in Scope, and nothing exists at p yet. Anything
 // already at p (even a dangling symlink or a folder), or a non-folder in place of one of
@@ -74,8 +111,9 @@ func (r *Root) CheckNewFile(scope, p Path) error {
 // anything appeared at p meanwhile (ErrConflict); the caller then removes the staged
 // name. The staged file's own data is the file at p afterwards, never a copy.
 func (r *Root) PlaceStaged(scope, p Path, staged string, mtime time.Time) error {
-	if staged == "" || staged == "." || staged == ".." || strings.ContainsAny(staged, `/\`) {
-		return fmt.Errorf("bad staged name %q", staged)
+	src, err := stagedRel(staged)
+	if err != nil {
+		return err
 	}
 	if err := r.CheckNewFile(scope, p); err != nil {
 		return err
@@ -85,11 +123,10 @@ func (r *Root) PlaceStaged(scope, p Path, staged string, mtime time.Time) error 
 			return err
 		}
 	}
-	src := filepath.Join(StagingDirName, staged)
 	if err := r.os.Chtimes(src, time.Time{}, mtime); err != nil {
 		return fmt.Errorf("set mtime: %w", err)
 	}
-	err := r.os.Link(src, p.osRel())
+	err = r.os.Link(src, p.osRel())
 	if errors.Is(err, fs.ErrExist) || errors.Is(err, syscall.ENOTDIR) {
 		return ErrConflict
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/tus/tusd/v2/pkg/filestore"
@@ -43,6 +44,22 @@ func (s *store) files() (filestore.FileStore, error) {
 	fs := filestore.New(dir)
 	fs.DirModePerm, fs.FileModePerm = 0o700, filePerm
 	return fs, nil
+}
+
+// stagedIDs lists the IDs of the Uploads in the Staging Area: every name "<id>.info"
+// whose id looks like one tusd generates. Anything else there is ignored.
+func (s *store) stagedIDs() ([]string, error) {
+	names, err := s.root.StagedNames()
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, name := range names {
+		if id, ok := strings.CutSuffix(name, ".info"); ok && idRe.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 func (s *store) NewUpload(ctx context.Context, info handler.FileInfo) (handler.Upload, error) {
