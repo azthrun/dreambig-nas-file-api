@@ -351,7 +351,7 @@ It reads `NAS_API` and `NAS_TOKEN` from the environment and exits `1` if anythin
 
 ## Development
 
-Go (version in [`go.mod`](go.mod)). Coding standards: [CODING_STANDARDS.md](CODING_STANDARDS.md).
+Go (version in [`go.mod`](go.mod), which also says why each dependency is needed). Coding standards: [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 ```sh
 go vet ./...
