@@ -42,7 +42,7 @@ func (r *Root) CheckNewFile(scope, p Path) error {
 	if p.IsRoot() {
 		return invalid("the Upload Root is a folder")
 	}
-	if err := r.check(scope, p); err != nil {
+	if _, err := r.check(scope, p); err != nil {
 		return err
 	}
 	for n := 1; n < len(p.segs); n++ {

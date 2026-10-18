@@ -21,7 +21,7 @@ const StagingDirName = ".nas-file-api-staging"
 // ErrInvalidPath means a path breaks a syntax rule; it never reached the filesystem.
 var ErrInvalidPath = errors.New("invalid path")
 
-// ErrHidden means a path names a Hidden Entry.
+// ErrHidden means a path names a Hidden Entry, directly or through a symlink.
 var ErrHidden = errors.New("hidden entry")
 
 // Path is a validated path relative to the Upload Root. The zero Path is the Upload

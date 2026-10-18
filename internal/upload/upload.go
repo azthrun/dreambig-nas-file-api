@@ -57,6 +57,9 @@ var (
 	errOutOfScope   = handler.NewError("ERR_OUT_OF_SCOPE", "outside your Scope", http.StatusForbidden)
 	errHashMismatch = handler.NewError("ERR_CHECKSUM_MISMATCH", "the file's SHA-256 does not match the declared sha256; the Upload was discarded", statusChecksumMismatch)
 	errNotFound     = handler.NewError("ERR_UPLOAD_NOT_FOUND", "upload not found", http.StatusNotFound)
+	// errHiddenDestination answers a Destination Path that reaches a Hidden Entry through
+	// a symlink: like the listings, it looks missing.
+	errHiddenDestination = handler.NewError("ERR_NOT_FOUND", "not found", http.StatusNotFound)
 )
 
 // Handler serves the tus endpoint. It must sit behind auth.Middleware and
@@ -312,6 +315,8 @@ func (h *Handler) pathError(ctx context.Context, err error) error {
 		return errOutOfScope
 	case errors.Is(err, uploadroot.ErrConflict):
 		return errConflict
+	case errors.Is(err, uploadroot.ErrHidden):
+		return errHiddenDestination
 	default:
 		h.log.ErrorContext(ctx, "upload path", "err", err)
 		return errInternal

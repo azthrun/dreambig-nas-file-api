@@ -23,7 +23,7 @@ func (r *Root) MkdirAll(scope, p Path) (created bool, err error) {
 	if err := p.CheckWritable(); err != nil {
 		return false, err
 	}
-	if err := r.check(scope, p); err != nil {
+	if _, err := r.check(scope, p); err != nil {
 		return false, err
 	}
 	for n := 1; n <= len(p.segs); n++ {

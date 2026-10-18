@@ -24,12 +24,9 @@ type WalkFunc func(rel string, e Entry) error
 // whole. Hidden Entries and their subtrees are skipped. Symlinks are reported as such
 // and never followed. The walk stops with ctx's error once ctx is done.
 func (r *Root) Walk(ctx context.Context, scope, p Path, fn WalkFunc) error {
-	if err := r.check(scope, p); err != nil {
-		return err
-	}
 	// Walk the folder p really is, so that Hidden Entries are recognized by where they
 	// are (p may be a symlink to the Upload Root, whose Staging Area must stay hidden).
-	p, err := r.resolveExisting(p)
+	p, err := r.check(scope, p)
 	if err != nil {
 		return err
 	}

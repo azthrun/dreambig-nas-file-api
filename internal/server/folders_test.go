@@ -220,8 +220,9 @@ func TestSymlinkOutOfScopeIsRefused(t *testing.T) {
 	if got := e.as(backupToken, "/api/v1/folders/backups/pics").Code; got != http.StatusForbidden {
 		t.Errorf("symlink from Scope to /photos = %d, want 403", got)
 	}
-	if got := e.as(adminToken, "/api/v1/folders/backups/meta").Code; got != http.StatusForbidden {
-		t.Errorf("symlink to a Hidden Entry = %d, want 403", got)
+	// Like naming the Hidden Entry directly (see TestHiddenEntriesReachedThroughASymlinkAre404).
+	if got := e.as(adminToken, "/api/v1/folders/backups/meta").Code; got != http.StatusNotFound {
+		t.Errorf("symlink to a Hidden Entry = %d, want 404", got)
 	}
 }
 

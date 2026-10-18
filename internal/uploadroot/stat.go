@@ -21,7 +21,7 @@ const hashChunk = 1 << 20
 // Stat describes p for a Caller with the given Scope. A symlink at p is reported as
 // such and not followed, as in a listing.
 func (r *Root) Stat(scope, p Path) (Entry, error) {
-	if err := r.check(scope, p); err != nil {
+	if _, err := r.check(scope, p); err != nil {
 		return Entry{}, err
 	}
 	fi, err := r.os.Lstat(p.osRel())
@@ -35,7 +35,7 @@ func (r *Root) Stat(scope, p Path) (Entry, error) {
 // the Entry the digest belongs to. The digest is never cached or stored. A symlink at p
 // is not followed (ErrNotFile). Reading stops early if ctx is cancelled.
 func (r *Root) SHA256(ctx context.Context, scope, p Path) (Entry, string, error) {
-	if err := r.check(scope, p); err != nil {
+	if _, err := r.check(scope, p); err != nil {
 		return Entry{}, "", err
 	}
 	before, err := r.os.Lstat(p.osRel())

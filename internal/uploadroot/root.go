@@ -72,7 +72,10 @@ type Entry struct {
 // ReadDir lists folder p for a Caller with the given Scope, sorted by name. Hidden
 // Entries are never included. Symlinks are reported as such and not followed.
 func (r *Root) ReadDir(scope, p Path) ([]Entry, error) {
-	if err := r.check(scope, p); err != nil {
+	// List the folder p really is, so that Hidden Entries are recognized by where they
+	// are (p may be a symlink to the Upload Root, whose Staging Area must stay hidden).
+	p, err := r.check(scope, p)
+	if err != nil {
 		return nil, err
 	}
 	f, err := r.os.Open(p.osRel())
@@ -125,25 +128,28 @@ func entryOf(fi fs.FileInfo) Entry {
 }
 
 // check refuses p unless it is within scope, and unless the part of it that exists,
-// with symlinks resolved, is still within scope and names no Hidden Entry. Missing
-// trailing segments are allowed (they will be created inside a checked folder).
-func (r *Root) check(scope, p Path) error {
+// with symlinks resolved, is still within scope and names no Hidden Entry (ErrHidden,
+// as if p named it directly). Missing trailing segments are allowed (they will be
+// created inside a checked folder). It returns p resolved, for code that must know
+// where p really is (e.g. to hide the Staging Area when p is a symlink to the Upload
+// Root).
+func (r *Root) check(scope, p Path) (Path, error) {
 	if !p.Within(scope) {
-		return ErrOutOfScope
+		return Path{}, ErrOutOfScope
 	}
 	resolved, err := r.resolveExisting(p)
 	if err != nil {
-		return err
+		return Path{}, err
 	}
 	if !resolved.Within(scope) {
-		return fmt.Errorf("%w: resolves through a symlink to outside it", ErrOutOfScope)
+		return Path{}, fmt.Errorf("%w: resolves through a symlink to outside it", ErrOutOfScope)
 	}
-	return nil
+	return resolved, nil
 }
 
 // resolveExisting resolves symlinks in the longest existing prefix of p and returns the
-// result as a Path (plus the missing suffix). A result outside the Upload Root or naming
-// a Hidden Entry is refused.
+// result as a Path (plus the missing suffix). A result outside the Upload Root is
+// ErrOutOfScope; one naming a Hidden Entry is ErrHidden.
 func (r *Root) resolveExisting(p Path) (Path, error) {
 	segs := p.segs
 	for n := len(segs); n >= 0; n-- {
@@ -162,11 +168,18 @@ func (r *Root) resolveExisting(p Path) (Path, error) {
 		var head Path
 		if rel != "." {
 			head, err = ParseSegments(strings.Split(filepath.ToSlash(rel), "/"))
+			if errors.Is(err, ErrHidden) {
+				return Path{}, ErrHidden
+			}
 			if err != nil {
 				return Path{}, fmt.Errorf("%w: resolves to %v", ErrOutOfScope, err)
 			}
 		}
-		return Path{segs: append(head.segs, segs[n:]...)}, nil
+		resolved := Path{segs: append(head.segs, segs[n:]...)}
+		if resolved.isStaging() {
+			return Path{}, ErrHidden // e.g. a missing Staging Area named through a symlink
+		}
+		return resolved, nil
 	}
 	return p, nil
 }
