@@ -113,7 +113,8 @@ The image is `ghcr.io/azthrun/dreambig-nas-file-api` (`linux/amd64`). CI publish
    - `NAS_FILE_API_TS_STATE_NAS_PATH`: the path from step 7.2.
    - `NAS_FILE_API_TS_AUTHKEY`: the key from step 5.
    - `NAS_FILE_API_TS_HOSTNAME=nas-file-api` (or your own machine name).
-   - Leave `NAS_FILE_API_ADDR` as it is. `compose.yaml` overrides it.
+   - `NAS_FILE_API_CALLERS`: one entry per Caller, comma-separated, as `name:token` or `name:token:/scope` (format in `.env.example`). Generate each token on the Mac with `openssl rand -hex 32` and give it only to that Caller. The service refuses to start on placeholder or short tokens, or duplicate names.
+   - Leave `NAS_FILE_API_ADDR` and `NAS_FILE_API_UPLOAD_ROOT` as they are. `compose.yaml` overrides the first; the second is already `/data`.
 4. Upload `env.txt` into `docker/dreambig-nas-file-api` and rename it to `.env`. To see it afterwards, tick **File Station > Settings > General > Show hidden files**.
 5. Upload [`tailscale-serve.json`](tailscale-serve.json) into the same folder, keeping its name. `compose.yaml` mounts it as `./tailscale-serve.json`. If it is missing, Docker creates an empty folder with that name and the sidecar won't serve HTTPS.
 6. Keep `.env` out of git and out of the Upload Root.
@@ -182,8 +183,13 @@ Go (version in [`go.mod`](go.mod)). Coding standards: [CODING_STANDARDS.md](CODI
 ```sh
 go vet ./...
 go test ./...
-NAS_FILE_API_ADDR=127.0.0.1:8080 go run ./cmd/nas-file-api
+token="$(openssl rand -hex 32)"
+mkdir -p /tmp/upload-root
+NAS_FILE_API_ADDR=127.0.0.1:8080 NAS_FILE_API_UPLOAD_ROOT=/tmp/upload-root \
+  NAS_FILE_API_CALLERS="dev:$token" go run ./cmd/nas-file-api
 curl http://127.0.0.1:8080/healthz
+# in a second terminal, with the same $token:
+curl -H "Authorization: Bearer $token" http://127.0.0.1:8080/api/v1/folders/
 ```
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push: vet, tests, build, a secrets scan, compose validation, and an image build plus smoke test. A `v*` tag also publishes the image to GHCR.
