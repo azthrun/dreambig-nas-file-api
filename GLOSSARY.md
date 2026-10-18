@@ -28,6 +28,10 @@ _Avoid_: target, location, remote path
 The transfer of one file to one Destination Path, which may span many requests and survive dropped connections before it completes.
 _Avoid_: transfer, job, session
 
+**Active Upload**:
+An Upload that has been created but has not yet received all its bytes and is still in the Staging Area (not completed, cancelled, discarded or expired); it counts toward its Caller's limit and the free-space reserve, including across restarts.
+_Avoid_: open upload, pending upload, in-flight upload
+
 **Staging Area**:
 The hidden place inside the Upload Root's filesystem where an Upload's data waits until it completes and is verified; never visible when listing.
 _Avoid_: temp dir, cache, incoming

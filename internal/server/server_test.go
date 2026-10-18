@@ -12,6 +12,7 @@ import (
 
 	"github.com/azthrun/dreambig-nas-file-api/internal/config"
 	"github.com/azthrun/dreambig-nas-file-api/internal/server"
+	"github.com/azthrun/dreambig-nas-file-api/internal/upload"
 	"github.com/azthrun/dreambig-nas-file-api/internal/uploadroot"
 )
 
@@ -35,7 +36,12 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	dir := t.TempDir()
+	return newEnvWith(t, t.TempDir(), upload.Limits{})
+}
+
+// newEnvWith is newEnv over the Upload Root dir with the given Upload limits.
+func newEnvWith(t *testing.T, dir string, limits upload.Limits) *env {
+	t.Helper()
 	root, err := uploadroot.Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +56,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	audit := &bytes.Buffer{}
-	srv, err := server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: audit, UploadExpiry: cfg.UploadExpiry})
+	srv, err := server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: audit, Limits: limits, UploadExpiry: cfg.UploadExpiry})
 	if err != nil {
 		t.Fatal(err)
 	}

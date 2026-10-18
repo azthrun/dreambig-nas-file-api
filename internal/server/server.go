@@ -30,6 +30,8 @@ type Deps struct {
 	Audit io.Writer
 	// Log receives operational errors (stderr in production); nil discards them.
 	Log *slog.Logger
+	// Limits restrict new Uploads; the zero value imposes none.
+	Limits upload.Limits
 	// UploadExpiry is how long an incomplete Upload may go untouched before
 	// ExpireUploads removes it (config.Config.UploadExpiry).
 	UploadExpiry time.Duration
@@ -60,7 +62,7 @@ func New(d Deps) (*Server, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	uploads, err := upload.New(d.Root, uploadsPath, log)
+	uploads, err := upload.New(d.Root, uploadsPath, d.Limits, log)
 	if err != nil {
 		return nil, fmt.Errorf("uploads: %w", err)
 	}
