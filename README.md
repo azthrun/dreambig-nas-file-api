@@ -176,6 +176,170 @@ Logs: **Container Manager > Container >** select the container **> Details > Log
 
 The sidecar keeps its tailnet identity in `tailscale-state`, so an update needs no new auth key. If that folder is emptied or deleted, generate a new key (step 5) and update `.env`.
 
+## Using the API from scripts
+
+There is no first-party client. Scripts use curl and any tus client. Every route except `/healthz` lives under `/api/v1/` and needs `Authorization: Bearer <token>`. Paths are relative to the Upload Root, and a Caller with a Scope sees only its subtree.
+
+### Add a Caller
+
+1. On the Mac, generate the Caller's Credential: `openssl rand -hex 32`. Keep it in a password manager or a file only the script can read. Give each script its own token.
+2. **File Station** > `docker/dreambig-nas-file-api` > `.env` (tick **Settings > General > Show hidden files** if you can't see it). Right-click > **Download**, edit it on the Mac, and append the Caller to `NAS_FILE_API_CALLERS`, comma-separated, as `name:token` or `name:token:/scope`. For example, `laptop:<token>,photo-backup:<token>:/backups/photos` gives `photo-backup` only `/backups/photos`. Upload it back under the same name and overwrite.
+3. **Container Manager > Project >** `dreambig-nas-file-api` **> Action > Stop**, then **Action > Build**, so the containers are recreated with the new `.env`.
+4. **Container Manager > Container >** `dreambig-nas-file-api-api-1` **> Details > Log** shows `"callers":N` with the new count. If it says `refusing to start: bad config`, the message names the entry that is wrong.
+
+To revoke a Caller, delete its entry and do step 3 again.
+
+The machine running the script must also be allowed through the tailnet policy (step 4 of the setup). For a server or CI runner, tag it and add the tag to `src`:
+
+```json
+{
+  "tagOwners": {
+    "tag:nas-file-api": ["autogroup:admin"],
+    "tag:upload-script": ["autogroup:admin"]
+  },
+  "acls": [
+    { "action": "accept", "src": ["macbook", "tag:upload-script"], "dst": ["tag:nas-file-api:443"] }
+  ]
+}
+```
+
+### Shell setup
+
+The examples below use these two variables:
+
+```sh
+export NAS_API=https://nas-file-api.<tailnet>.ts.net/api/v1
+export NAS_TOKEN=<token>   # better: NAS_TOKEN="$(cat ~/.config/nas-file-api/token)", keeping it out of shell history
+```
+
+### curl
+
+Percent-encode path segments (a space is `%20`). Every error is JSON, `{"error":"..."}`.
+
+```sh
+# Create a folder, with any missing parents: 201 if something was created, 200 if it already existed.
+curl -sS -X PUT -H "Authorization: Bearer $NAS_TOKEN" "$NAS_API/folders/photos/2024%20trip"
+# {"path":"/photos/2024 trip","created":true}
+
+# List one folder (the Upload Root is "$NAS_API/folders/").
+curl -sS -H "Authorization: Bearer $NAS_TOKEN" "$NAS_API/folders/photos"
+# {"path":"/photos","entries":[{"name":"2024 trip","type":"folder","size":0,"mtime":"2026-10-18T15:17:20.807799107Z"},...]}
+
+# Everything below a folder, streamed as one JSON line per entry (paths relative to that folder).
+curl -sS -N -H "Authorization: Bearer $NAS_TOKEN" "$NAS_API/tree/photos"
+# {"path":"2024 trip","type":"folder","size":0,"mtime":"2026-10-18T15:17:20.807799107Z"}
+# {"path":"2024 trip/img_001.jpg","type":"file","size":2483012,"mtime":"2024-06-01T10:00:00Z"}
+
+# Stat one file; ?hash=sha256 adds its SHA-256 (the server reads the whole file each time).
+curl -sS -H "Authorization: Bearer $NAS_TOKEN" "$NAS_API/files/photos/2024%20trip/img_001.jpg?hash=sha256"
+# {"path":"/photos/2024 trip/img_001.jpg","type":"file","size":2483012,"mtime":"2024-06-01T10:00:00Z","sha256":"<64 hex>"}
+```
+
+The tree listing is streamed. If it fails partway, its last line is `{"error":"..."}` and the listing is incomplete.
+
+Status codes: `400` bad path or name, `401` missing or wrong Credential, `403` outside your Scope, `404` not found, `409` a file is in the way.
+
+### Uploads (tus)
+
+Uploads use the [tus protocol](https://tus.io/protocols/resumable-upload) at `$NAS_API/uploads/`. Any tus 1.0 client works. Send in the Upload metadata:
+
+| Key | Value |
+| --- | --- |
+| `path` | Destination Path, relative to the Upload Root (e.g. `docs/report.pdf`); required. Missing folders are created. |
+| `mtime` | The file's modification time, RFC 3339 (e.g. `2021-03-04T05:06:07Z`); required. The file gets this mtime. |
+| `sha256` | The whole file's SHA-256, hex; optional. If it doesn't match, the Upload is refused and discarded. |
+
+The response that completes the Upload carries the server's SHA-256 of the file in `Upload-Sha256`. Nothing is ever overwritten: if the Destination Path already holds a file, creating the Upload (or completing it, if the file appeared meanwhile) fails with `409`. A SHA-256 mismatch fails with `460`. An unfinished Upload can be resumed by the Caller that created it.
+
+#### With curl
+
+tus metadata values are base64. This creates the Upload, then sends the whole file in one request:
+
+```sh
+b64() { printf %s "$1" | base64 | tr -d '\n'; }
+
+f=report.pdf
+dest=docs/report.pdf
+size=$(wc -c < "$f" | tr -d ' ')
+mtime=$(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ)   # GNU and BSD date
+sum=$(shasum -a 256 "$f" | cut -d' ' -f1)     # or: sha256sum "$f" | cut -d' ' -f1
+
+upload=$(curl -sS -D - -o /dev/null -X POST "$NAS_API/uploads/" \
+  -H "Authorization: Bearer $NAS_TOKEN" -H "Tus-Resumable: 1.0.0" \
+  -H "Upload-Length: $size" \
+  -H "Upload-Metadata: path $(b64 "$dest"),mtime $(b64 "$mtime"),sha256 $(b64 "$sum")" \
+  | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+echo "$upload"   # the Upload's URL; empty if creating failed (run the POST without -D - -o /dev/null and the pipe to see why)
+
+curl -sS -D - -o /dev/null -X PATCH "$upload" \
+  -H "Authorization: Bearer $NAS_TOKEN" -H "Tus-Resumable: 1.0.0" \
+  -H "Content-Type: application/offset+octet-stream" -H "Upload-Offset: 0" \
+  -T "$f"
+# HTTP/1.1 204 No Content ... Upload-Offset: <size> ... Upload-Sha256: <64 hex>
+```
+
+A 0-byte file completes on creation; skip the `PATCH`. If the `PATCH` is cut off, ask for the offset the server has and send the rest:
+
+```sh
+offset=$(curl -sS -I "$upload" \
+  -H "Authorization: Bearer $NAS_TOKEN" -H "Tus-Resumable: 1.0.0" \
+  | tr -d '\r' | sed -n 's/^[Uu]pload-[Oo]ffset: //p')
+
+tail -c +$((offset + 1)) "$f" | curl -sS -D - -o /dev/null -X PATCH "$upload" \
+  -H "Authorization: Bearer $NAS_TOKEN" -H "Tus-Resumable: 1.0.0" \
+  -H "Content-Type: application/offset+octet-stream" -H "Upload-Offset: $offset" \
+  -T -
+```
+
+#### With Python (tus-py-client)
+
+```sh
+python3 -m venv ~/.venvs/nas-file-api && ~/.venvs/nas-file-api/bin/pip install tuspy
+```
+
+```python
+import datetime, hashlib, os
+from tusclient import client
+from tusclient.exceptions import TusCommunicationError
+
+src, dest = "report.pdf", "docs/report.pdf"
+
+mtime = datetime.datetime.fromtimestamp(os.stat(src).st_mtime, datetime.timezone.utc).isoformat()
+h = hashlib.sha256()
+with open(src, "rb") as f:
+    for block in iter(lambda: f.read(1 << 20), b""):
+        h.update(block)
+
+tus = client.TusClient(os.environ["NAS_API"] + "/uploads/",
+                       headers={"Authorization": "Bearer " + os.environ["NAS_TOKEN"]})
+# Without chunk_size, tuspy reads the whole file into memory and sends it in one request.
+uploader = tus.uploader(src, chunk_size=64 << 20,
+                        metadata={"path": dest, "mtime": mtime, "sha256": h.hexdigest()})
+try:
+    uploader.upload()
+except TusCommunicationError as e:  # e.status_code: 409 Conflict, 460 SHA-256 mismatch, ...
+    raise SystemExit("upload failed: %s %s" % (e.status_code, e.response_content))
+if uploader.request:  # None for a 0-byte file, which completes on creation
+    print("server sha256:", uploader.request.response_headers["upload-sha256"])
+```
+
+Run it with `~/.venvs/nas-file-api/bin/python3 upload.py`.
+
+### Folder Upload
+
+[`examples/folder_upload.py`](examples/folder_upload.py) rebuilds a local folder under a Destination Path, one Upload per file. It lists the destination once with the tree listing, skips files already there with the same size and mtime (to the second), reports files that are there but differ as Conflicts (never overwritten), creates the empty folders, and uploads the rest with their mtime and SHA-256. A dropped connection is resumed; running it again after a failure skips what already arrived. Symlinks are skipped.
+
+```sh
+~/.venvs/nas-file-api/bin/python3 examples/folder_upload.py --dry-run ~/Pictures/2024 backups/pictures/2024
+~/.venvs/nas-file-api/bin/python3 examples/folder_upload.py ~/Pictures/2024 backups/pictures/2024
+# mkdir    empty-album
+# uploaded img_001.jpg (2483012 bytes, sha256 <64 hex>)
+# ...
+# 120 uploaded, 1 folders created, 0 skipped, 0 conflicts, 0 failed
+```
+
+It reads `NAS_API` and `NAS_TOKEN` from the environment and exits `1` if anything failed or was a Conflict. Its diff logic has tests: `python3 -m unittest discover -s examples`.
+
 ## Development
 
 Go (version in [`go.mod`](go.mod)). Coding standards: [CODING_STANDARDS.md](CODING_STANDARDS.md).
