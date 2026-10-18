@@ -4,7 +4,9 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/azthrun/dreambig-nas-file-api/internal/audit"
 	"github.com/azthrun/dreambig-nas-file-api/internal/auth"
 	"github.com/azthrun/dreambig-nas-file-api/internal/config"
+	"github.com/azthrun/dreambig-nas-file-api/internal/upload"
 	"github.com/azthrun/dreambig-nas-file-api/internal/uploadroot"
 )
 
@@ -24,15 +27,24 @@ type Deps struct {
 	Callers []config.Caller
 	// Audit receives one JSON line per request other than /healthz (stdout in production).
 	Audit io.Writer
+	// Log receives operational errors (stderr in production); nil discards them.
+	Log *slog.Logger
 }
+
+// uploadsPath is where the tus endpoint for Uploads lives (ADR-0003).
+const uploadsPath = apiPrefix + "uploads/"
 
 // New returns the service's HTTP handler.
 //
 // Requests under /api/v1/ are routed without http.ServeMux, whose path cleaning would
 // silently redirect "..", "." and "//" instead of letting the path validator refuse
 // them.
-func New(d Deps) http.Handler {
-	api := auth.New(d.Callers).Middleware(&apiHandler{root: d.Root})
+func New(d Deps) (http.Handler, error) {
+	uploads, err := upload.New(d.Root, uploadsPath, d.Log)
+	if err != nil {
+		return nil, fmt.Errorf("uploads: %w", err)
+	}
+	api := auth.New(d.Callers).Middleware(&apiHandler{root: d.Root, uploads: uploads})
 	audited := audit.New(d.Audit).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, apiPrefix) || r.URL.Path == strings.TrimSuffix(apiPrefix, "/") {
 			api.ServeHTTP(w, r)
@@ -48,12 +60,13 @@ func New(d Deps) http.Handler {
 			return
 		}
 		audited.ServeHTTP(w, r)
-	})
+	}), nil
 }
 
 // apiHandler serves the authenticated routes.
 type apiHandler struct {
-	root *uploadroot.Root
+	root    *uploadroot.Root
+	uploads http.Handler
 }
 
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +83,8 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut)
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
+	case rest == "/uploads" || strings.HasPrefix(rest, "/uploads/"):
+		h.uploads.ServeHTTP(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "no such route")
 	}

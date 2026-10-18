@@ -49,11 +49,11 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	audit := &bytes.Buffer{}
-	return &env{t: t, root: dir, audit: audit, h: server.New(server.Deps{
-		Root:    root,
-		Callers: cfg.Callers,
-		Audit:   audit,
-	})}
+	h, err := server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: audit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &env{t: t, root: dir, audit: audit, h: h}
 }
 
 func (e *env) mkdir(rel string) {

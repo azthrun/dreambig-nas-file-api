@@ -61,9 +61,13 @@ func run(cfg config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 	}
+	// The audit log goes to stdout, operational logs to stderr.
+	handler, err := server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: os.Stdout, Log: log})
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
-		// The audit log goes to stdout, operational logs to stderr.
-		Handler:           server.New(server.Deps{Root: root, Callers: cfg.Callers, Audit: os.Stdout}),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)
