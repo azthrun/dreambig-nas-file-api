@@ -1,0 +1,625 @@
+# OpenAPI description of the NAS file API, for importing into Insomnia or another HTTP
+# client. It is documentation only: the service does not serve it. Keep it in step with
+# internal/server and internal/upload.
+openapi: 3.0.3
+info:
+  title: NAS File API
+  version: 0.1.0
+  description: |
+    Lets trusted Callers put files and folder trees into the Upload Root on the NAS, and
+    see what is already there. Nothing is ever read back, deleted, moved or overwritten
+    (ADR-0001).
+
+    Every route except `/healthz` needs `Authorization: Bearer <token>`. Paths are
+    relative to the Upload Root, and a Caller with a Scope sees only its subtree.
+
+    **Path parameters may contain `/`.** `folderPath` and `filePath` are whole paths such
+    as `photos/2024%20trip`. Percent-encode each segment (a space is `%20`) but leave the
+    slashes between segments as they are. Leave `folderPath` empty to mean the Upload
+    Root.
+
+    Routes under `/api/v1/` answer errors as JSON, `{"error":"..."}`. The tus routes
+    under `/api/v1/uploads/` answer errors as plain text, `ERR_CODE: message`.
+
+    **Uploads** use tus 1.0 (ADR-0003). One Upload takes three steps:
+    1. `POST /api/v1/uploads/` creates it. The `Location` response header is the
+       Upload's URL; its last segment is the `uploadId`.
+    2. `PATCH /api/v1/uploads/{uploadId}` sends bytes from `Upload-Offset`. The request
+       that delivers the last byte returns the server's SHA-256 in `Upload-Sha256`.
+    3. If a `PATCH` is cut off, `HEAD /api/v1/uploads/{uploadId}` returns the offset the
+       server has; `PATCH` the rest from there.
+servers:
+  - url: https://nas-file-api.{tailnet}.ts.net
+    description: The NAS, through `tailscale serve`
+    variables:
+      tailnet:
+        default: your-tailnet
+        description: Your tailnet's name, the part before `.ts.net`
+  - url: http://127.0.0.1:8080
+    description: Local development (README "Development")
+security:
+  - bearer: []
+tags:
+  - name: Health
+    description: Liveness, with no Credential.
+  - name: Folders
+    description: List folders and create them.
+  - name: Files
+    description: Stat one entry.
+  - name: Uploads
+    description: Resumable Uploads over tus 1.0.
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      operationId: healthz
+      summary: Liveness check
+      description: Needs no Credential and reveals nothing about the Upload Root.
+      security: []
+      responses:
+        "200":
+          description: The service is up.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "ok\n"
+
+  /api/v1/folders/:
+    get:
+      tags: [Folders]
+      operationId: listUploadRoot
+      summary: List the Upload Root
+      description: The Upload Root's entries, without Hidden Entries.
+      responses:
+        "200":
+          $ref: "#/components/responses/FolderListing"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OutOfScope"
+
+  /api/v1/folders/{folderPath}:
+    parameters:
+      - $ref: "#/components/parameters/folderPath"
+    get:
+      tags: [Folders]
+      operationId: listFolder
+      summary: List a folder
+      description: The folder's entries, without Hidden Entries.
+      responses:
+        "200":
+          $ref: "#/components/responses/FolderListing"
+        "400":
+          $ref: "#/components/responses/BadPath"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OutOfScope"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Folders]
+      operationId: createFolder
+      summary: Create a folder
+      description: Creates the folder and any missing parents.
+      responses:
+        "200":
+          description: The folder already existed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedFolder"
+              example:
+                path: /photos/2024 trip
+                created: false
+        "201":
+          description: The folder, or one of its parents, was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedFolder"
+              example:
+                path: /photos/2024 trip
+                created: true
+        "400":
+          $ref: "#/components/responses/BadPath"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OutOfScope"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/tree/:
+    get:
+      tags: [Folders]
+      operationId: treeUploadRoot
+      summary: List everything below the Upload Root
+      description: See `listTree`.
+      responses:
+        "200":
+          $ref: "#/components/responses/TreeListing"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OutOfScope"
+
+  /api/v1/tree/{folderPath}:
+    parameters:
+      - $ref: "#/components/parameters/folderPath"
+    get:
+      tags: [Folders]
+      operationId: listTree
+      summary: List everything below a folder
+      description: |
+        Every non-hidden entry below the folder, one JSON object per line, streamed as
+        the folder is walked. Paths are relative to the requested folder. If the listing
+        fails partway, its last line is `{"error":"..."}` and the listing is incomplete.
+      responses:
+        "200":
+          $ref: "#/components/responses/TreeListing"
+        "400":
+          $ref: "#/components/responses/BadPath"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OutOfScope"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/files/{filePath}:
+    parameters:
+      - name: filePath
+        in: path
+        required: true
+        description: The entry's path, segments percent-encoded, slashes left as they are.
+        schema:
+          type: string
+        example: photos/2024%20trip/img_001.jpg
+    get:
+      tags: [Files]
+      operationId: statFile
+      summary: Stat a file or folder
+      description: Type, size and mtime of one entry.
+      parameters:
+        - name: hash
+          in: query
+          required: false
+          description: |
+            `sha256` adds the file's SHA-256. The server reads the whole file every time.
+          schema:
+            type: string
+            enum: [sha256]
+      responses:
+        "200":
+          description: The entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stat"
+              example:
+                path: /photos/2024 trip/img_001.jpg
+                type: file
+                size: 2483012
+                mtime: "2024-06-01T10:00:00Z"
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        "400":
+          description: Bad path, `hash` other than `sha256`, or `hash=sha256` on a folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/OutOfScope"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/uploads/:
+    post:
+      tags: [Uploads]
+      operationId: createUpload
+      summary: Create an Upload
+      description: |
+        Checks the metadata, the Scope and for a Conflict, then creates the Upload. A
+        0-byte Upload completes here, and the response carries `Upload-Sha256`.
+      parameters:
+        - $ref: "#/components/parameters/TusResumable"
+        - name: Upload-Length
+          in: header
+          required: true
+          description: The file's size in bytes.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          example: 12
+        - name: Upload-Metadata
+          in: header
+          required: true
+          description: |
+            Comma-separated `key base64(value)` pairs:
+            - `path`: Destination Path, relative to the Upload Root; required. Missing
+              folders are created.
+            - `mtime`: the file's modification time, RFC 3339; required. The file gets
+              this mtime.
+            - `sha256`: the whole file's SHA-256, hex; optional. On a mismatch the
+              Upload is discarded with `460`.
+
+            The example is `path` = `phase1-check/hello.txt`, `mtime` =
+            `2021-03-04T05:06:07Z`.
+          schema:
+            type: string
+          example: path cGhhc2UxLWNoZWNrL2hlbGxvLnR4dA==,mtime MjAyMS0wMy0wNFQwNTowNjowN1o=
+      responses:
+        "201":
+          description: Created.
+          headers:
+            Location:
+              description: |
+                The Upload's URL, `.../api/v1/uploads/{uploadId}`. Behind `tailscale
+                serve` it must be `https`.
+              schema:
+                type: string
+                format: uri
+            Tus-Resumable:
+              $ref: "#/components/headers/TusResumable"
+            Upload-Sha256:
+              $ref: "#/components/headers/UploadSha256"
+        "400":
+          description: Missing or bad `path`, `mtime` or `sha256`, or a bad Destination Path.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/TusError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/TusOutOfScope"
+        "404":
+          description: The Destination Path reaches a Hidden Entry.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/TusError"
+        "409":
+          $ref: "#/components/responses/TusConflict"
+        "429":
+          description: The Caller already has the most Active Uploads allowed.
+          headers:
+            Retry-After:
+              description: Seconds to wait.
+              schema:
+                type: integer
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/TusError"
+        "507":
+          description: The NAS lacks the space for this Upload while keeping its reserve.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/TusError"
+
+  /api/v1/uploads/{uploadId}:
+    parameters:
+      - name: uploadId
+        in: path
+        required: true
+        description: The last segment of the `Location` from `createUpload`.
+        schema:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+    head:
+      tags: [Uploads]
+      operationId: getUploadOffset
+      summary: Get an Upload's offset
+      description: How many bytes the server has, to resume a cut-off `PATCH`.
+      parameters:
+        - $ref: "#/components/parameters/TusResumable"
+      responses:
+        "200":
+          description: The Upload's progress. No body.
+          headers:
+            Upload-Offset:
+              description: Bytes received so far; send the next `PATCH` from here.
+              schema:
+                type: integer
+                format: int64
+            Upload-Length:
+              description: The file's size in bytes.
+              schema:
+                type: integer
+                format: int64
+            Upload-Metadata:
+              description: The Upload's metadata, as base64 pairs.
+              schema:
+                type: string
+            Tus-Resumable:
+              $ref: "#/components/headers/TusResumable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UploadNotFound"
+    patch:
+      tags: [Uploads]
+      operationId: sendUploadBytes
+      summary: Send bytes
+      description: |
+        Appends the body at `Upload-Offset`. When the last byte arrives, the server
+        checks again for a Conflict, hashes the file, checks it against a declared
+        `sha256`, and links it into place with its mtime. Hashing a multi-GB file takes
+        a while before the response comes. If completing fails, the Upload is
+        discarded.
+      parameters:
+        - $ref: "#/components/parameters/TusResumable"
+        - name: Upload-Offset
+          in: header
+          required: true
+          description: The offset this body starts at; `0` first, else from `getUploadOffset`.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          example: 0
+      requestBody:
+        required: true
+        description: The file's bytes from `Upload-Offset`. In Insomnia, choose **Binary File**.
+        content:
+          application/offset+octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Bytes accepted.
+          headers:
+            Upload-Offset:
+              description: Bytes received so far.
+              schema:
+                type: integer
+                format: int64
+            Tus-Resumable:
+              $ref: "#/components/headers/TusResumable"
+            Upload-Sha256:
+              $ref: "#/components/headers/UploadSha256"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/TusOutOfScope"
+        "404":
+          $ref: "#/components/responses/UploadNotFound"
+        "409":
+          description: |
+            `Upload-Offset` is not the server's offset, or a file appeared at the
+            Destination Path before the Upload completed (the Upload is discarded).
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/TusError"
+        "460":
+          description: The file's SHA-256 does not match the declared `sha256`; the Upload was discarded.
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/TusError"
+    delete:
+      tags: [Uploads]
+      operationId: cancelUpload
+      summary: Cancel an Upload
+      description: Discards an unfinished Upload, so it stops counting as active.
+      parameters:
+        - $ref: "#/components/parameters/TusResumable"
+      responses:
+        "204":
+          description: Cancelled.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UploadNotFound"
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: The Caller's Credential.
+
+  parameters:
+    folderPath:
+      name: folderPath
+      in: path
+      required: true
+      description: The folder's path, segments percent-encoded, slashes left as they are.
+      schema:
+        type: string
+      example: photos/2024%20trip
+    TusResumable:
+      name: Tus-Resumable
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: ["1.0.0"]
+      example: "1.0.0"
+
+  headers:
+    TusResumable:
+      schema:
+        type: string
+        example: "1.0.0"
+    UploadSha256:
+      description: |
+        The server's SHA-256 of the file, hex. Only on the response that completes the
+        Upload.
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+
+  schemas:
+    EntryType:
+      type: string
+      enum: [file, folder]
+    Entry:
+      type: object
+      required: [name, type, size, mtime]
+      properties:
+        name:
+          type: string
+        type:
+          $ref: "#/components/schemas/EntryType"
+        size:
+          type: integer
+          format: int64
+          description: Bytes; 0 for a folder.
+        mtime:
+          type: string
+          format: date-time
+    FolderListing:
+      type: object
+      required: [path, entries]
+      properties:
+        path:
+          type: string
+          description: The folder, from the Upload Root, starting with `/`.
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry"
+    TreeEntry:
+      type: object
+      required: [path, type, size, mtime]
+      properties:
+        path:
+          type: string
+          description: Relative to the requested folder.
+        type:
+          $ref: "#/components/schemas/EntryType"
+        size:
+          type: integer
+          format: int64
+        mtime:
+          type: string
+          format: date-time
+    Stat:
+      type: object
+      required: [path, type, size, mtime]
+      properties:
+        path:
+          type: string
+        type:
+          $ref: "#/components/schemas/EntryType"
+        size:
+          type: integer
+          format: int64
+        mtime:
+          type: string
+          format: date-time
+        sha256:
+          type: string
+          description: Only with `?hash=sha256`.
+    CreatedFolder:
+      type: object
+      required: [path, created]
+      properties:
+        path:
+          type: string
+        created:
+          type: boolean
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    TusError:
+      type: string
+      description: "`ERR_CODE: message`"
+      example: "ERR_CONFLICT: a file already exists at the Destination Path, or a file stands in place of one of its folders"
+
+  responses:
+    FolderListing:
+      description: The folder's entries.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/FolderListing"
+          example:
+            path: /photos
+            entries:
+              - name: 2024 trip
+                type: folder
+                size: 0
+                mtime: "2026-10-18T15:17:20.807799107Z"
+    TreeListing:
+      description: One `TreeEntry` per line.
+      content:
+        application/x-ndjson:
+          schema:
+            type: string
+            description: Newline-delimited `TreeEntry` objects.
+          example: |
+            {"path":"2024 trip","type":"folder","size":0,"mtime":"2026-10-18T15:17:20.807799107Z"}
+            {"path":"2024 trip/img_001.jpg","type":"file","size":2483012,"mtime":"2024-06-01T10:00:00Z"}
+    BadPath:
+      description: Bad path or name, or a file where a folder is needed (or the reverse).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or wrong Credential.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: missing or invalid Credential
+    OutOfScope:
+      description: Outside the Caller's Scope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found, or a Hidden Entry.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: A file is in the way.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TusOutOfScope:
+      description: The Destination Path is outside the Caller's Scope.
+      content:
+        text/plain:
+          schema:
+            $ref: "#/components/schemas/TusError"
+    TusConflict:
+      description: |
+        A file already exists at the Destination Path, or a file stands in place of one
+        of its folders. Nothing is overwritten.
+      content:
+        text/plain:
+          schema:
+            $ref: "#/components/schemas/TusError"
+    UploadNotFound:
+      description: No such Upload, or another Caller's.
+      content:
+        text/plain:
+          schema:
+            $ref: "#/components/schemas/TusError"

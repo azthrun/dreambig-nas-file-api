@@ -395,6 +395,22 @@ cd ~/nas-tus && node upload.mjs ~/report.pdf docs/report.pdf
 
 If the connection drops (or the service restarts) mid-Upload, it asks for the offset and resumes within the same run. A Conflict exits `1` with the `409`.
 
+#### With Insomnia
+
+[`docs/openapi.yaml`](docs/openapi.yaml) describes every route, including the tus steps. The service doesn't serve it, so import the file itself.
+
+1. In Insomnia, **Import** > **File** > `docs/openapi.yaml`. It becomes a collection with one request per route, grouped by tag.
+2. In the collection's environment, set the host to `nas-file-api.<tailnet>.ts.net` and the bearer token to the Caller's token.
+3. Path parameters may contain slashes. Set `folderPath` or `filePath` to a whole path such as `photos/2024%20trip`, encoding each segment but not the slashes. Leave it empty to mean the Upload Root.
+
+To upload a small file:
+
+1. **Create an Upload**: set `Upload-Length` to the file's size in bytes. In `Upload-Metadata`, replace the example values with base64 ones, typed in or made with Insomnia's **Encoding > Base64** template tag. Send it and read the `Location` response header.
+2. **Send bytes**: set `uploadId` to the last segment of `Location`, or link it to that header with a **Response > Header** template tag. Leave `Upload-Offset` at `0`, choose **Binary File** as the body, pick the file and send it. The `204` carries `Upload-Sha256`.
+3. If that request is cut off, **Get an Upload's offset** returns `Upload-Offset`. Send the rest of the file from there, or cancel the Upload with **Cancel an Upload**.
+
+Insomnia sends a file in one request and cannot pick up partway through a file, so use tuspy or tus-js-client above for large files and real resume tests.
+
 ### Folder Upload
 
 [`examples/folder_upload.py`](examples/folder_upload.py) rebuilds a local folder under a Destination Path, one Upload per file. It lists the destination once with the tree listing, skips files already there with the same size and mtime (to the second), reports files that are there but differ as Conflicts (never overwritten), creates the empty folders, and uploads the rest with their mtime and SHA-256. A dropped connection is resumed; running it again after a failure skips what already arrived. Symlinks are skipped.
