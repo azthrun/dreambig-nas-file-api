@@ -173,7 +173,12 @@ Logs: **Container Manager > Container >** select the container **> Details > Log
 
 ### Updating
 
-**Container Manager > Project >** `dreambig-nas-file-api` **> Action > Stop**, then **Action > Build**. This pulls the `image:` tag again and recreates the containers. If you pinned a version tag, change it first under **YAML configurations** (or **Edit**).
+1. **Container Manager > Project >** `dreambig-nas-file-api` **> Action > Stop**.
+2. Under **YAML configurations** (or **Edit**), paste the current [`compose.yaml`](compose.yaml) if it changed since the last update, and set the `api` service's `image:` line to the version you want (`ghcr.io/azthrun/dreambig-nas-file-api:vX.Y.Z`). A release can add required `.env` values, so compare `.env` with [`.env.example`](.env.example) too. **Save**.
+3. **Action > Build**. This recreates the containers.
+4. Check the version that is actually running: **Container >** `dreambig-nas-file-api-api-1` **> Details > Log**. The newest `listening` line must end with `"callers":N`, where N is the number of Callers in `.env`. If the line has no `callers` field, the old image is still running.
+
+**If Build keeps running the old version:** it can reuse the image already on the NAS instead of pulling. Stop the Project, then go to **Container Manager > Image**, select `ghcr.io/azthrun/dreambig-nas-file-api` > **Delete**, and **Build** again. **Image** should then show the new tag.
 
 The sidecar keeps its tailnet identity in `tailscale-state`, so an update needs no new auth key. If that folder is emptied or deleted, generate a new key (step 5) and update `.env`.
 
